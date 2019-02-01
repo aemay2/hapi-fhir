@@ -4,7 +4,7 @@ package ca.uhn.fhir.parser;
  * #%L
  * HAPI FHIR - Core Library
  * %%
- * Copyright (C) 2014 - 2017 University Health Network
+ * Copyright (C) 2014 - 2019 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -139,7 +139,7 @@ public class XmlParser extends BaseParser /* implements IParser */ {
 							Attribute urlAttr = elem.getAttributeByName(new QName("url"));
 							String url;
 							if (urlAttr == null || isBlank(urlAttr.getValue())) {
-								getErrorHandler().missingRequiredElement(new ParseLocation("extension"), "url");
+								getErrorHandler().missingRequiredElement(new ParseLocation().setParentElementName("extension"), "url");
 								url = null;
 							} else {
 								url = urlAttr.getValue();
@@ -149,7 +149,7 @@ public class XmlParser extends BaseParser /* implements IParser */ {
 							Attribute urlAttr = elem.getAttributeByName(new QName("url"));
 							String url;
 							if (urlAttr == null || isBlank(urlAttr.getValue())) {
-								getErrorHandler().missingRequiredElement(new ParseLocation("modifierExtension"), "url");
+								getErrorHandler().missingRequiredElement(new ParseLocation().setParentElementName("modifierExtension"), "url");
 								url = null;
 							} else {
 								url = urlAttr.getValue();

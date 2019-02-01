@@ -9,6 +9,7 @@ import ca.uhn.fhir.model.dstu2.valueset.HTTPVerbEnum;
 import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.api.server.ResponseDetails;
 import ca.uhn.fhir.rest.server.exceptions.BaseServerResponseException;
 import ca.uhn.fhir.rest.server.interceptor.IServerInterceptor;
 import ca.uhn.fhir.rest.server.interceptor.IServerInterceptor.ActionRequestDetails;
@@ -33,9 +34,10 @@ import java.nio.charset.StandardCharsets;
 
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.Assert.*;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+@SuppressWarnings("deprecation")
 public class ResourceProviderInterceptorDstu2Test extends BaseResourceProviderDstu2Test {
 
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(ResourceProviderInterceptorDstu2Test.class);
@@ -67,12 +69,14 @@ public class ResourceProviderInterceptorDstu2Test extends BaseResourceProviderDs
 		when(myServerInterceptor.incomingRequestPreProcessed(any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
 		when(myServerInterceptor.outgoingResponse(any(RequestDetails.class), any(IBaseResource.class))).thenReturn(true);
 		when(myServerInterceptor.outgoingResponse(any(RequestDetails.class), any(IBaseResource.class), any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
+		when(myServerInterceptor.outgoingResponse(any(RequestDetails.class), any(ResponseDetails.class), any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
 
 		when(myJpaServerInterceptor.handleException(any(RequestDetails.class), any(BaseServerResponseException.class), any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
 		when(myJpaServerInterceptor.incomingRequestPostProcessed(any(RequestDetails.class), any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
 		when(myJpaServerInterceptor.incomingRequestPreProcessed(any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
 		when(myJpaServerInterceptor.outgoingResponse(any(RequestDetails.class), any(IBaseResource.class))).thenReturn(true);
 		when(myJpaServerInterceptor.outgoingResponse(any(RequestDetails.class), any(IBaseResource.class), any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
+		when(myJpaServerInterceptor.outgoingResponse(any(RequestDetails.class), any(ResponseDetails.class), any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
 
 		myDaoConfig.getInterceptors().add(myDaoInterceptor);
 		ourRestServer.registerInterceptor(myServerInterceptor);
@@ -97,15 +101,12 @@ public class ResourceProviderInterceptorDstu2Test extends BaseResourceProviderDs
 
 		HttpPost post = new HttpPost(ourServerBase + "/Patient");
 		post.setEntity(new StringEntity(resource, ContentType.create(Constants.CT_FHIR_XML, "UTF-8")));
-		CloseableHttpResponse response = ourHttpClient.execute(post);
-		try {
+		try (CloseableHttpResponse response = ourHttpClient.execute(post)) {
 			String resp = IOUtils.toString(response.getEntity().getContent(), StandardCharsets.UTF_8);
 			ourLog.info("Response was: {}", resp);
 			assertEquals(201, response.getStatusLine().getStatusCode());
 			String newIdString = response.getFirstHeader(Constants.HEADER_LOCATION_LC).getValue();
 			assertThat(newIdString, startsWith(ourServerBase + "/Patient/"));
-		} finally {
-			response.close();
 		}
 
 		ArgumentCaptor<ActionRequestDetails> ardCaptor = ArgumentCaptor.forClass(ActionRequestDetails.class);
@@ -137,11 +138,8 @@ public class ResourceProviderInterceptorDstu2Test extends BaseResourceProviderDs
 
 		HttpPost post = new HttpPost(ourServerBase + "/");
 		post.setEntity(new StringEntity(resource, ContentType.create(Constants.CT_FHIR_XML, "UTF-8")));
-		CloseableHttpResponse response = ourHttpClient.execute(post);
-		try {
+		try (CloseableHttpResponse response = ourHttpClient.execute(post)) {
 			assertEquals(200, response.getStatusLine().getStatusCode());
-		} finally {
-			response.close();
 		}
 
 		/*
@@ -151,8 +149,8 @@ public class ResourceProviderInterceptorDstu2Test extends BaseResourceProviderDs
 		ArgumentCaptor<ActionRequestDetails> ardCaptor = ArgumentCaptor.forClass(ActionRequestDetails.class);
 		ArgumentCaptor<RestOperationTypeEnum> opTypeCaptor = ArgumentCaptor.forClass(RestOperationTypeEnum.class);
 		verify(myServerInterceptor, times(2)).incomingRequestPreHandled(opTypeCaptor.capture(), ardCaptor.capture());
-		assertEquals(RestOperationTypeEnum.TRANSACTION, opTypeCaptor.getAllValues().get(0));
-		assertEquals(null, ardCaptor.getAllValues().get(0).getResourceType());
+		assertEquals("Had types: " + opTypeCaptor.getAllValues() + " and requests: " + ardCaptor.getAllValues(), RestOperationTypeEnum.TRANSACTION, opTypeCaptor.getAllValues().get(0));
+		assertNull(ardCaptor.getAllValues().get(0).getResourceType());
 		assertNotNull(ardCaptor.getAllValues().get(0).getResource());
 		assertEquals(RestOperationTypeEnum.CREATE, opTypeCaptor.getAllValues().get(1));
 		assertEquals("Patient", ardCaptor.getAllValues().get(1).getResourceType());
@@ -172,10 +170,10 @@ public class ResourceProviderInterceptorDstu2Test extends BaseResourceProviderDs
 		ardCaptor = ArgumentCaptor.forClass(ActionRequestDetails.class);
 		opTypeCaptor = ArgumentCaptor.forClass(RestOperationTypeEnum.class);
 		verify(myDaoInterceptor, atLeast(2)).incomingRequestPreHandled(opTypeCaptor.capture(), ardCaptor.capture());
-		assertEquals(RestOperationTypeEnum.TRANSACTION, opTypeCaptor.getAllValues().get(0));
+		assertEquals("Had types: " + opTypeCaptor.getAllValues() + " and requests: " + ardCaptor.getAllValues(), RestOperationTypeEnum.TRANSACTION, opTypeCaptor.getAllValues().get(0));
 		assertEquals("Bundle", ardCaptor.getAllValues().get(0).getResourceType());
 		assertNotNull(ardCaptor.getAllValues().get(0).getResource());
-		assertEquals(RestOperationTypeEnum.CREATE, opTypeCaptor.getAllValues().get(1));
+		assertEquals("Had types: " + opTypeCaptor.getAllValues() + " and requests: " + ardCaptor.getAllValues(), RestOperationTypeEnum.CREATE, opTypeCaptor.getAllValues().get(1));
 		assertEquals("Patient", ardCaptor.getAllValues().get(1).getResourceType());
 		assertNotNull(ardCaptor.getAllValues().get(1).getResource());
 

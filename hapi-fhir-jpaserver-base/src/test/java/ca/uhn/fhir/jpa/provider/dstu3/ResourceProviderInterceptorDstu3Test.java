@@ -1,11 +1,11 @@
 package ca.uhn.fhir.jpa.provider.dstu3;
 
 import ca.uhn.fhir.jpa.provider.r4.ResourceProviderInterceptorR4Test;
-import ca.uhn.fhir.model.dstu2.resource.Conformance;
 import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.api.server.ResponseDetails;
 import ca.uhn.fhir.rest.server.exceptions.BaseServerResponseException;
 import ca.uhn.fhir.rest.server.interceptor.IServerInterceptor;
 import ca.uhn.fhir.rest.server.interceptor.IServerInterceptor.ActionRequestDetails;
@@ -29,6 +29,7 @@ import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.context.TestPropertySource;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -38,9 +39,12 @@ import java.nio.charset.StandardCharsets;
 
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.Assert.*;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+@TestPropertySource(properties = {
+	"scheduling_disabled=true"
+})
 public class ResourceProviderInterceptorDstu3Test extends BaseResourceProviderDstu3Test {
 
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(ResourceProviderInterceptorDstu3Test.class);
@@ -61,8 +65,8 @@ public class ResourceProviderInterceptorDstu3Test extends BaseResourceProviderDs
 	public void before() throws Exception {
 		super.before();
 
-		myServerInterceptor = mock(IServerInterceptor.class);
-		myDaoInterceptor = mock(IServerInterceptor.class);
+		myServerInterceptor = mock(IServerInterceptor.class, withSettings().verboseLogging());
+		myDaoInterceptor = mock(IServerInterceptor.class, withSettings().verboseLogging());
 
 		resetServerInterceptor();
 
@@ -86,6 +90,7 @@ public class ResourceProviderInterceptorDstu3Test extends BaseResourceProviderDs
 		when(myServerInterceptor.incomingRequestPreProcessed(any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
 		when(myServerInterceptor.outgoingResponse(any(RequestDetails.class), any(IBaseResource.class))).thenReturn(true);
 		when(myServerInterceptor.outgoingResponse(any(RequestDetails.class), any(IBaseResource.class), any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
+		when(myServerInterceptor.outgoingResponse(any(RequestDetails.class), any(ResponseDetails.class), any(HttpServletRequest.class), any(HttpServletResponse.class))).thenReturn(true);
 	}
 
 	@Test
@@ -125,6 +130,8 @@ public class ResourceProviderInterceptorDstu3Test extends BaseResourceProviderDs
 	public void testCreateResourceInTransaction() throws IOException, ServletException {
 		String methodName = "testCreateResourceInTransaction";
 
+		ourLog.info("** Starting {}", methodName);
+
 		Patient pt = new Patient();
 		pt.addName().setFamily(methodName);
 
@@ -140,6 +147,11 @@ public class ResourceProviderInterceptorDstu3Test extends BaseResourceProviderDs
 
 		resetServerInterceptor();
 
+		ArgumentCaptor<ActionRequestDetails> ardCaptor = ArgumentCaptor.forClass(ActionRequestDetails.class);
+		ArgumentCaptor<RestOperationTypeEnum> opTypeCaptor = ArgumentCaptor.forClass(RestOperationTypeEnum.class);
+		verify(myDaoInterceptor, times(0)).incomingRequestPreHandled(opTypeCaptor.capture(), ardCaptor.capture());
+		verify(myServerInterceptor, times(0)).incomingRequestPreHandled(opTypeCaptor.capture(), ardCaptor.capture());
+
 		HttpPost post = new HttpPost(ourServerBase + "/");
 		post.setEntity(new StringEntity(resource, ContentType.create(Constants.CT_FHIR_XML, "UTF-8")));
 		CloseableHttpResponse response = ourHttpClient.execute(post);
@@ -153,8 +165,8 @@ public class ResourceProviderInterceptorDstu3Test extends BaseResourceProviderDs
 		 * Server Interceptor
 		 */
 
-		ArgumentCaptor<ActionRequestDetails> ardCaptor = ArgumentCaptor.forClass(ActionRequestDetails.class);
-		ArgumentCaptor<RestOperationTypeEnum> opTypeCaptor = ArgumentCaptor.forClass(RestOperationTypeEnum.class);
+		ardCaptor = ArgumentCaptor.forClass(ActionRequestDetails.class);
+		opTypeCaptor = ArgumentCaptor.forClass(RestOperationTypeEnum.class);
 		verify(myServerInterceptor, times(2)).incomingRequestPreHandled(opTypeCaptor.capture(), ardCaptor.capture());
 		assertEquals(RestOperationTypeEnum.TRANSACTION, opTypeCaptor.getAllValues().get(0));
 		assertEquals(null, ardCaptor.getAllValues().get(0).getResourceType());

@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.entity;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2017 University Health Network
+ * Copyright (C) 2014 - 2019 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,23 @@ package ca.uhn.fhir.jpa.entity;
 
 public enum SearchStatusEnum {
 
+	/**
+	 * The search is currently actively working
+	 */
 	LOADING,
+	/**
+	 * The search has loaded a set of results and has stopped searching because it
+	 * reached an appropriate threshold
+	 */
+	PASSCMPLET,
+	/**
+	 * The search completed normally and loaded all of the results it as permitted to
+	 * load
+	 */
 	FINISHED,
+	/**
+	 * The search failed and will not continue
+	 */
 	FAILED
-	
+
 }

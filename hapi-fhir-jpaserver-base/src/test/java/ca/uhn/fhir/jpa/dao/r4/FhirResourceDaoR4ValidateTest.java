@@ -4,21 +4,35 @@ import static org.hamcrest.Matchers.containsString;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-
+import ca.uhn.fhir.rest.api.EncodingEnum;
+import ca.uhn.fhir.rest.api.MethodOutcome;
+import ca.uhn.fhir.rest.api.ValidationModeEnum;
+import ca.uhn.fhir.rest.server.exceptions.PreconditionFailedException;
+import ca.uhn.fhir.rest.server.exceptions.ResourceGoneException;
+import ca.uhn.fhir.rest.server.exceptions.ResourceVersionConflictException;
+import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
+import ca.uhn.fhir.util.StopWatch;
+import ca.uhn.fhir.util.TestUtil;
 import org.apache.commons.io.IOUtils;
-import org.hl7.fhir.r4.model.*;
-import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
-import org.hl7.fhir.r4.model.Observation.ObservationStatus;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
-import org.junit.*;
+import org.hl7.fhir.r4.model.Bundle;
+import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
+import org.hl7.fhir.r4.model.CanonicalType;
+import org.hl7.fhir.r4.model.IdType;
+import org.hl7.fhir.r4.model.Observation;
+import org.hl7.fhir.r4.model.Observation.ObservationStatus;
+import org.hl7.fhir.r4.model.OperationOutcome;
+import org.hl7.fhir.r4.model.Organization;
+import org.hl7.fhir.r4.model.Patient;
+import org.hl7.fhir.r4.model.StructureDefinition;
+import org.hl7.fhir.r4.model.ValueSet;
+import org.junit.AfterClass;
+import org.junit.Ignore;
+import org.junit.Test;
 
-import ca.uhn.fhir.jpa.util.StopWatch;
-import ca.uhn.fhir.rest.api.*;
-import ca.uhn.fhir.rest.server.exceptions.*;
-import ca.uhn.fhir.util.TestUtil;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 public class FhirResourceDaoR4ValidateTest extends BaseJpaR4Test {
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(FhirResourceDaoR4ValidateTest.class);
@@ -30,7 +44,7 @@ public class FhirResourceDaoR4ValidateTest extends BaseJpaR4Test {
 
 	@Test
 	public void testValidateStructureDefinition() throws Exception {
-		String input = IOUtils.toString(getClass().getResourceAsStream("/sd-david-dhtest7.json"), StandardCharsets.UTF_8);
+		String input = IOUtils.toString(getClass().getResourceAsStream("/r4/sd-david-dhtest7.json"), StandardCharsets.UTF_8);
 		StructureDefinition sd = myFhirCtx.newJsonParser().parseResource(StructureDefinition.class, input);
 		
 		
@@ -114,10 +128,10 @@ public class FhirResourceDaoR4ValidateTest extends BaseJpaR4Test {
 		myStructureDefinitionDao.create(sd, mySrd);
 
 		Observation input = new Observation();
-		input.getMeta().getProfile().add(new IdType(sd.getUrl()));
+		input.getMeta().getProfile().add(new CanonicalType(sd.getUrl()));
 
 		input.addIdentifier().setSystem("http://acme").setValue("12345");
-		input.getContext().setReference("http://foo.com/Encounter/9");
+		input.getEncounter().setReference("http://foo.com/Encounter/9");
 		input.setStatus(ObservationStatus.FINAL);
 		input.getCode().addCoding().setSystem("http://loinc.org").setCode("12345");
 
@@ -153,11 +167,11 @@ public class FhirResourceDaoR4ValidateTest extends BaseJpaR4Test {
 		String methodName = "testValidateResourceContainingProfileDeclarationInvalid";
 
 		Observation input = new Observation();
-		String profileUri = "http://example.com/" + methodName;
-		input.getMeta().getProfile().add(new IdType(profileUri));
+		String profileUri = "http://example.com/StructureDefinition/" + methodName;
+		input.getMeta().getProfile().add(new CanonicalType(profileUri));
 
 		input.addIdentifier().setSystem("http://acme").setValue("12345");
-		input.getContext().setReference("http://foo.com/Encounter/9");
+		input.getEncounter().setReference("http://foo.com/Encounter/9");
 		input.setStatus(ObservationStatus.FINAL);
 		input.getCode().addCoding().setSystem("http://loinc.org").setCode("12345");
 
@@ -267,6 +281,46 @@ public class FhirResourceDaoR4ValidateTest extends BaseJpaR4Test {
 		ooString = myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome);
 		ourLog.info(ooString);
 		assertThat(ooString, containsString("Ok to delete"));
+
+	}
+
+	@Test
+	public void testValidateForDeleteWithReferentialIntegrityDisabled() {
+		myDaoConfig.setEnforceReferentialIntegrityOnDelete(false);
+		String methodName = "testValidateForDelete";
+
+		Organization org = new Organization();
+		org.setName(methodName);
+		IIdType orgId = myOrganizationDao.create(org, mySrd).getId().toUnqualifiedVersionless();
+
+		Patient pat = new Patient();
+		pat.addName().setFamily(methodName);
+		pat.getManagingOrganization().setReference(orgId.getValue());
+		IIdType patId = myPatientDao.create(pat, mySrd).getId().toUnqualifiedVersionless();
+
+		myOrganizationDao.validate(null, orgId, null, null, ValidationModeEnum.DELETE, null, mySrd);
+
+		myDaoConfig.setEnforceReferentialIntegrityOnDelete(true);
+		try {
+			myOrganizationDao.validate(null, orgId, null, null, ValidationModeEnum.DELETE, null, mySrd);
+			fail();
+		} catch (ResourceVersionConflictException e) {
+			// good
+		}
+
+		myDaoConfig.setEnforceReferentialIntegrityOnDelete(false);
+
+
+		myOrganizationDao.read(orgId);
+
+		myOrganizationDao.delete(orgId);
+
+		try {
+			myOrganizationDao.read(orgId);
+			fail();
+		} catch (ResourceGoneException e) {
+			// good
+		}
 
 	}
 

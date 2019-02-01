@@ -4,7 +4,7 @@ package ca.uhn.fhir.parser;
  * #%L
  * HAPI FHIR - Core Library
  * %%
- * Copyright (C) 2014 - 2017 University Health Network
+ * Copyright (C) 2014 - 2019 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import ca.uhn.fhir.model.primitive.IdDt;
 import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.util.UrlUtil;
+import com.google.common.base.Charsets;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 import org.hl7.fhir.instance.model.api.*;
@@ -38,12 +39,13 @@ import java.util.*;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
+@SuppressWarnings("WeakerAccess")
 public abstract class BaseParser implements IParser {
 
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(BaseParser.class);
 
 	private ContainedResources myContainedResources;
-
+	private boolean myEncodeElementsAppliesToChildResourcesOnly;
 	private FhirContext myContext;
 	private Set<String> myDontEncodeElements;
 	private boolean myDontEncodeElementsIncludesStars;
@@ -156,8 +158,6 @@ public abstract class BaseParser implements IParser {
 	}
 
 	private void containResourcesForEncoding(ContainedResources theContained, IBaseResource theResource, IBaseResource theTarget) {
-		Set<String> allIds = new HashSet<String>();
-		Map<String, IBaseResource> existingIdToContainedResource = null;
 
 		if (theTarget instanceof IResource) {
 			List<? extends IResource> containedResources = ((IResource) theTarget).getContained().getContainedResources();
@@ -167,11 +167,7 @@ public abstract class BaseParser implements IParser {
 					if (!nextId.startsWith("#")) {
 						nextId = '#' + nextId;
 					}
-					allIds.add(nextId);
-					if (existingIdToContainedResource == null) {
-						existingIdToContainedResource = new HashMap<String, IBaseResource>();
-					}
-					existingIdToContainedResource.put(nextId, next);
+					theContained.getExistingIdToContainedResource().put(nextId, next);
 				}
 			}
 		} else if (theTarget instanceof IDomainResource) {
@@ -182,46 +178,46 @@ public abstract class BaseParser implements IParser {
 					if (!nextId.startsWith("#")) {
 						nextId = '#' + nextId;
 					}
-					allIds.add(nextId);
-					if (existingIdToContainedResource == null) {
-						existingIdToContainedResource = new HashMap<String, IBaseResource>();
-					}
-					existingIdToContainedResource.put(nextId, next);
+					theContained.getExistingIdToContainedResource().put(nextId, next);
 				}
 			}
 		} else {
 			// no resources to contain
 		}
 
-		{
-			List<IBaseReference> allElements = myContext.newTerser().getAllPopulatedChildElementsOfType(theResource, IBaseReference.class);
-			for (IBaseReference next : allElements) {
-				IBaseResource resource = next.getResource();
-				if (resource != null) {
-					if (resource.getIdElement().isEmpty() || resource.getIdElement().isLocal()) {
-						if (theContained.getResourceId(resource) != null) {
-							// Prevent infinite recursion if there are circular loops in the contained resources
-							continue;
-						}
-						theContained.addContained(resource);
-						if (resource.getIdElement().isLocal() && existingIdToContainedResource != null) {
-							existingIdToContainedResource.remove(resource.getIdElement().getValue());
-						}
-					} else {
-						continue;
-					}
-
-					containResourcesForEncoding(theContained, resource, theTarget);
-				} else if (next.getReferenceElement().isLocal()) {
-					if (existingIdToContainedResource != null) {
-						IBaseResource potentialTarget = existingIdToContainedResource.remove(next.getReferenceElement().getValue());
-						if (potentialTarget != null) {
-							theContained.addContained(next.getReferenceElement(), potentialTarget);
-							containResourcesForEncoding(theContained, potentialTarget, theTarget);
-						}
+		List<IBaseReference> allReferences = myContext.newTerser().getAllPopulatedChildElementsOfType(theResource, IBaseReference.class);
+		for (IBaseReference next : allReferences) {
+			IBaseResource resource = next.getResource();
+			if (resource == null && next.getReferenceElement().isLocal()) {
+				if (theContained.hasExistingIdToContainedResource()) {
+					IBaseResource potentialTarget = theContained.getExistingIdToContainedResource().remove(next.getReferenceElement().getValue());
+					if (potentialTarget != null) {
+						theContained.addContained(next.getReferenceElement(), potentialTarget);
+						containResourcesForEncoding(theContained, potentialTarget, theTarget);
 					}
 				}
 			}
+		}
+
+		for (IBaseReference next : allReferences) {
+			IBaseResource resource = next.getResource();
+			if (resource != null) {
+				if (resource.getIdElement().isEmpty() || resource.getIdElement().isLocal()) {
+					if (theContained.getResourceId(resource) != null) {
+						// Prevent infinite recursion if there are circular loops in the contained resources
+						continue;
+					}
+					theContained.addContained(resource);
+					if (resource.getIdElement().isLocal() && theContained.hasExistingIdToContainedResource()) {
+						theContained.getExistingIdToContainedResource().remove(resource.getIdElement().getValue());
+					}
+				} else {
+					continue;
+				}
+
+				containResourcesForEncoding(theContained, resource, theTarget);
+			}
+
 		}
 
 	}
@@ -229,7 +225,9 @@ public abstract class BaseParser implements IParser {
 	protected void containResourcesForEncoding(IBaseResource theResource) {
 		ContainedResources contained = new ContainedResources();
 		containResourcesForEncoding(contained, theResource, theResource);
+		contained.assignIdsToContainedResources();
 		myContainedResources = contained;
+
 	}
 
 	private String determineReferenceText(IBaseReference theRef, CompositeChildElement theCompositeChildElement) {
@@ -449,6 +447,17 @@ public abstract class BaseParser implements IParser {
 		return myErrorHandler;
 	}
 
+	protected List<Map.Entry<ResourceMetadataKeyEnum<?>, Object>> getExtensionMetadataKeys(IResource resource) {
+		List<Map.Entry<ResourceMetadataKeyEnum<?>, Object>> extensionMetadataKeys = new ArrayList<Map.Entry<ResourceMetadataKeyEnum<?>, Object>>();
+		for (Map.Entry<ResourceMetadataKeyEnum<?>, Object> entry : resource.getResourceMetadata().entrySet()) {
+			if (entry.getKey() instanceof ResourceMetadataKeyEnum.ExtensionResourceMetadataKey) {
+				extensionMetadataKeys.add(entry);
+			}
+		}
+
+		return extensionMetadataKeys;
+	}
+
 	protected String getExtensionUrl(final String extensionUrl) {
 		String url = extensionUrl;
 		if (StringUtils.isNotBlank(extensionUrl) && StringUtils.isNotBlank(myServerBaseUrl)) {
@@ -461,7 +470,7 @@ public abstract class BaseParser implements IParser {
 		TagList tags = ResourceMetadataKeyEnum.TAG_LIST.get(theIResource);
 		if (shouldAddSubsettedTag()) {
 			tags = new TagList(tags);
-			tags.add(new Tag(Constants.TAG_SUBSETTED_SYSTEM, Constants.TAG_SUBSETTED_CODE, subsetDescription()));
+			tags.add(new Tag(getSubsettedCodeSystem(), Constants.TAG_SUBSETTED_CODE, subsetDescription()));
 		}
 
 		return tags;
@@ -480,7 +489,7 @@ public abstract class BaseParser implements IParser {
 	@Override
 	public void setPreferTypes(List<Class<? extends IBaseResource>> thePreferTypes) {
 		if (thePreferTypes != null) {
-			ArrayList<Class<? extends IBaseResource>> types = new ArrayList<Class<? extends IBaseResource>>();
+			ArrayList<Class<? extends IBaseResource>> types = new ArrayList<>();
 			for (Class<? extends IBaseResource> next : thePreferTypes) {
 				if (Modifier.isAbstract(next.getModifiers()) == false) {
 					types.add(next);
@@ -516,8 +525,7 @@ public abstract class BaseParser implements IParser {
 				}
 			}
 
-			List<T> newList = new ArrayList<T>();
-			newList.addAll(theProfiles);
+			List<T> newList = new ArrayList<>(theProfiles);
 
 			BaseRuntimeElementDefinition<?> idElement = myContext.getElementDefinition("id");
 			@SuppressWarnings("unchecked")
@@ -557,6 +565,16 @@ public abstract class BaseParser implements IParser {
 	}
 
 	@Override
+	public boolean isEncodeElementsAppliesToChildResourcesOnly() {
+		return myEncodeElementsAppliesToChildResourcesOnly;
+	}
+
+	@Override
+	public void setEncodeElementsAppliesToChildResourcesOnly(boolean theEncodeElementsAppliesToChildResourcesOnly) {
+		myEncodeElementsAppliesToChildResourcesOnly = theEncodeElementsAppliesToChildResourcesOnly;
+	}
+
+	@Override
 	public boolean isOmitResourceId() {
 		return myOmitResourceId;
 	}
@@ -588,11 +606,7 @@ public abstract class BaseParser implements IParser {
 		}
 
 		dontStripVersionsFromReferencesAtPaths = myContext.getParserOptions().getDontStripVersionsFromReferencesAtPaths();
-		if (dontStripVersionsFromReferencesAtPaths.isEmpty() == false && theCompositeChildElement.anyPathMatches(dontStripVersionsFromReferencesAtPaths)) {
-			return false;
-		}
-
-		return true;
+		return dontStripVersionsFromReferencesAtPaths.isEmpty() != false || !theCompositeChildElement.anyPathMatches(dontStripVersionsFromReferencesAtPaths);
 	}
 
 	@Override
@@ -608,6 +622,16 @@ public abstract class BaseParser implements IParser {
 	 */
 	public boolean isSuppressNarratives() {
 		return mySuppressNarratives;
+	}
+
+	@Override
+	public IBaseResource parseResource(InputStream theInputStream) throws DataFormatException {
+		return parseResource(new InputStreamReader(theInputStream, Charsets.UTF_8));
+	}
+
+	@Override
+	public <T extends IBaseResource> T parseResource(Class<T> theResourceType, InputStream theInputStream) throws DataFormatException {
+		return parseResource(theResourceType, new InputStreamReader(theInputStream, Charsets.UTF_8));
 	}
 
 	@Override
@@ -671,7 +695,7 @@ public abstract class BaseParser implements IParser {
 	@Override
 	public <T extends IBaseResource> T parseResource(Class<T> theResourceType, String theMessageString) {
 		StringReader reader = new StringReader(theMessageString);
-		return (T) parseResource(theResourceType, reader);
+		return parseResource(theResourceType, reader);
 	}
 
 	@Override
@@ -733,7 +757,7 @@ public abstract class BaseParser implements IParser {
 				if (shouldAddSubsettedTag()) {
 					IBaseCoding coding = metaValue.addTag();
 					coding.setCode(Constants.TAG_SUBSETTED_CODE);
-					coding.setSystem(Constants.TAG_SUBSETTED_SYSTEM);
+					coding.setSystem(getSubsettedCodeSystem());
 					coding.setDisplay(subsetDescription());
 				}
 
@@ -758,7 +782,7 @@ public abstract class BaseParser implements IParser {
 				if (!StringUtils.equals(refText, nextRef.getReferenceElement().getValue())) {
 
 					if (retVal == theValues) {
-						retVal = new ArrayList<IBase>(theValues);
+						retVal = new ArrayList<>(theValues);
 					}
 					IBaseReference newRef = (IBaseReference) myContext.getElementDefinition(nextRef.getClass()).newInstance();
 					myContext.newTerser().cloneInto(nextRef, newRef, true);
@@ -770,6 +794,14 @@ public abstract class BaseParser implements IParser {
 		}
 
 		return retVal;
+	}
+
+	private String getSubsettedCodeSystem() {
+		if (myContext.getVersion().getVersion().isEqualOrNewerThan(FhirVersionEnum.R4)) {
+			return Constants.TAG_SUBSETTED_SYSTEM_R4;
+		} else {
+			return Constants.TAG_SUBSETTED_SYSTEM_DSTU3;
+		}
 	}
 
 	@Override
@@ -805,7 +837,7 @@ public abstract class BaseParser implements IParser {
 		} else if (thePaths instanceof HashSet) {
 			myDontStripVersionsFromReferencesAtPaths = (Set<String>) ((HashSet<String>) thePaths).clone();
 		} else {
-			myDontStripVersionsFromReferencesAtPaths = new HashSet<String>(thePaths);
+			myDontStripVersionsFromReferencesAtPaths = new HashSet<>(thePaths);
 		}
 		return this;
 	}
@@ -884,9 +916,7 @@ public abstract class BaseParser implements IParser {
 			String resourceName = myContext.getResourceDefinition(theResource).getName();
 			if (myDontEncodeElements.contains(resourceName + ".meta")) {
 				return false;
-			} else if (myDontEncodeElements.contains("*.meta")) {
-				return false;
-			}
+			} else return !myDontEncodeElements.contains("*.meta");
 		}
 		return true;
 	}
@@ -898,7 +928,7 @@ public abstract class BaseParser implements IParser {
 	protected void throwExceptionForUnknownChildType(BaseRuntimeChildDefinition nextChild, Class<? extends IBase> theType) {
 		if (nextChild instanceof BaseRuntimeDeclaredChildDefinition) {
 			StringBuilder b = new StringBuilder();
-			b.append(((BaseRuntimeDeclaredChildDefinition) nextChild).getElementName());
+			b.append(nextChild.getElementName());
 			b.append(" has type ");
 			b.append(theType.getName());
 			b.append(" but this is not a valid type for this element");
@@ -909,36 +939,6 @@ public abstract class BaseParser implements IParser {
 			throw new DataFormatException(b.toString());
 		}
 		throw new DataFormatException(nextChild + " has no child of type " + theType);
-	}
-
-	protected static <T> List<T> extractMetadataListNotNull(IResource resource, ResourceMetadataKeyEnum<List<T>> key) {
-		List<? extends T> securityLabels = key.get(resource);
-		if (securityLabels == null) {
-			securityLabels = Collections.emptyList();
-		}
-		return new ArrayList<T>(securityLabels);
-	}
-
-	static boolean hasExtensions(IBase theElement) {
-		if (theElement instanceof ISupportsUndeclaredExtensions) {
-			ISupportsUndeclaredExtensions res = (ISupportsUndeclaredExtensions) theElement;
-			if (res.getUndeclaredExtensions().size() > 0 || res.getUndeclaredModifierExtensions().size() > 0) {
-				return true;
-			}
-		}
-		if (theElement instanceof IBaseHasExtensions) {
-			IBaseHasExtensions res = (IBaseHasExtensions) theElement;
-			if (res.hasExtension()) {
-				return true;
-			}
-		}
-		if (theElement instanceof IBaseHasModifierExtensions) {
-			IBaseHasModifierExtensions res = (IBaseHasModifierExtensions) theElement;
-			if (res.hasModifierExtension()) {
-				return true;
-			}
-		}
-		return false;
 	}
 
 	class ChildNameAndDef {
@@ -1039,7 +1039,13 @@ public abstract class BaseParser implements IParser {
 		}
 
 		private boolean checkIfParentShouldBeEncodedAndBuildPath(StringBuilder thePathBuilder, boolean theStarPass) {
-			return checkIfPathMatchesForEncoding(thePathBuilder, theStarPass, myEncodeElementsAppliesToResourceTypes, myEncodeElements, true);
+			Set<String> encodeElements = myEncodeElements;
+			if (encodeElements != null && encodeElements.isEmpty() == false) {
+				if (isEncodeElementsAppliesToChildResourcesOnly() && !mySubResource) {
+					encodeElements = null;
+				}
+			}
+			return checkIfPathMatchesForEncoding(thePathBuilder, theStarPass, myEncodeElementsAppliesToResourceTypes, encodeElements, true);
 		}
 
 		private boolean checkIfParentShouldNotBeEncodedAndBuildPath(StringBuilder thePathBuilder, boolean theStarPass) {
@@ -1058,10 +1064,10 @@ public abstract class BaseParser implements IParser {
 				} else {
 					thePathBuilder.append(myResDef.getName());
 				}
-				if (theElements.contains(thePathBuilder.toString())) {
+				if (theElements == null) {
 					return true;
 				}
-				return false;
+				return theElements.contains(thePathBuilder.toString());
 			} else if (myParent != null) {
 				boolean parentCheck;
 				if (theCheckingForWhitelist) {
@@ -1096,7 +1102,7 @@ public abstract class BaseParser implements IParser {
 				}
 			}
 
-			return true;
+			return false;
 		}
 
 		public BaseRuntimeChildDefinition getDef() {
@@ -1142,11 +1148,19 @@ public abstract class BaseParser implements IParser {
 	static class ContainedResources {
 		private long myNextContainedId = 1;
 
-		private List<IBaseResource> myResources = new ArrayList<IBaseResource>();
-		private IdentityHashMap<IBaseResource, IIdType> myResourceToId = new IdentityHashMap<IBaseResource, IIdType>();
+		private List<IBaseResource> myResourceList;
+		private IdentityHashMap<IBaseResource, IIdType> myResourceToIdMap;
+		private Map<String, IBaseResource> myExistingIdToContainedResourceMap;
+
+		public Map<String, IBaseResource> getExistingIdToContainedResource() {
+			if (myExistingIdToContainedResourceMap == null) {
+				myExistingIdToContainedResourceMap = new HashMap<>();
+			}
+			return myExistingIdToContainedResourceMap;
+		}
 
 		public void addContained(IBaseResource theResource) {
-			if (myResourceToId.containsKey(theResource)) {
+			if (getResourceToIdMap().containsKey(theResource)) {
 				return;
 			}
 
@@ -1154,32 +1168,130 @@ public abstract class BaseParser implements IParser {
 			if (theResource.getIdElement().isLocal()) {
 				newId = theResource.getIdElement();
 			} else {
-				// TODO: make this configurable between the two below (and something else?)
-				// newId = new IdDt(UUID.randomUUID().toString());
-				newId = new IdDt(myNextContainedId++);
+				newId = null;
 			}
 
-			myResourceToId.put(theResource, newId);
-			myResources.add(theResource);
+			getResourceToIdMap().put(theResource, newId);
+			getResourceList().add(theResource);
 		}
 
 		public void addContained(IIdType theId, IBaseResource theResource) {
-			myResourceToId.put(theResource, theId);
-			myResources.add(theResource);
+			if (!getResourceToIdMap().containsKey(theResource)) {
+				getResourceToIdMap().put(theResource, theId);
+				getResourceList().add(theResource);
+			}
 		}
 
 		public List<IBaseResource> getContainedResources() {
-			return myResources;
+			if (getResourceToIdMap() == null) {
+				return Collections.emptyList();
+			}
+			return getResourceList();
 		}
 
 		public IIdType getResourceId(IBaseResource theNext) {
-			return myResourceToId.get(theNext);
+			if (getResourceToIdMap() == null) {
+				return null;
+			}
+			return getResourceToIdMap().get(theNext);
+		}
+
+		private List<IBaseResource> getResourceList() {
+			if (myResourceList == null) {
+				myResourceList = new ArrayList<>();
+			}
+			return myResourceList;
+		}
+
+		private IdentityHashMap<IBaseResource, IIdType> getResourceToIdMap() {
+			if (myResourceToIdMap == null) {
+				myResourceToIdMap = new IdentityHashMap<>();
+			}
+			return myResourceToIdMap;
 		}
 
 		public boolean isEmpty() {
-			return myResourceToId.isEmpty();
+			if (myResourceToIdMap == null) {
+				return true;
+			}
+			return myResourceToIdMap.isEmpty();
 		}
 
+		public boolean hasExistingIdToContainedResource() {
+			return myExistingIdToContainedResourceMap != null;
+		}
+
+		public void assignIdsToContainedResources() {
+
+			if (getResourceList() != null) {
+
+				/*
+				 * The idea with the code block below:
+				 *
+				 * We want to preserve any IDs that were user-assigned, so that if it's really
+				 * important to someone that their contained resource have the ID of #FOO
+				 * or #1 we will keep that.
+				 *
+				 * For any contained resources where no ID was assigned by the user, we
+				 * want to manually create an ID but make sure we don't reuse an existing ID.
+				 */
+
+				Set<String> ids = new HashSet<>();
+
+				// Gather any user assigned IDs
+				for (IBaseResource nextResource : getResourceList()) {
+					if (getResourceToIdMap().get(nextResource) != null) {
+						ids.add(getResourceToIdMap().get(nextResource).getValue());
+						continue;
+					}
+				}
+
+				// Automatically assign IDs to the rest
+				for (IBaseResource nextResource : getResourceList()) {
+
+					while (getResourceToIdMap().get(nextResource) == null) {
+						String nextCandidate = "#" + myNextContainedId;
+						myNextContainedId++;
+						if (!ids.add(nextCandidate)) {
+							continue;
+						}
+
+						getResourceToIdMap().put(nextResource, new IdDt(nextCandidate));
+					}
+
+				}
+
+			}
+
+		}
+	}
+
+	protected static <T> List<T> extractMetadataListNotNull(IResource resource, ResourceMetadataKeyEnum<List<T>> key) {
+		List<? extends T> securityLabels = key.get(resource);
+		if (securityLabels == null) {
+			securityLabels = Collections.emptyList();
+		}
+		return new ArrayList<>(securityLabels);
+	}
+
+	static boolean hasExtensions(IBase theElement) {
+		if (theElement instanceof ISupportsUndeclaredExtensions) {
+			ISupportsUndeclaredExtensions res = (ISupportsUndeclaredExtensions) theElement;
+			if (res.getUndeclaredExtensions().size() > 0 || res.getUndeclaredModifierExtensions().size() > 0) {
+				return true;
+			}
+		}
+		if (theElement instanceof IBaseHasExtensions) {
+			IBaseHasExtensions res = (IBaseHasExtensions) theElement;
+			if (res.hasExtension()) {
+				return true;
+			}
+		}
+		if (theElement instanceof IBaseHasModifierExtensions) {
+			IBaseHasModifierExtensions res = (IBaseHasModifierExtensions) theElement;
+			return res.hasModifierExtension();
+		}
+		return false;
 	}
 
 }

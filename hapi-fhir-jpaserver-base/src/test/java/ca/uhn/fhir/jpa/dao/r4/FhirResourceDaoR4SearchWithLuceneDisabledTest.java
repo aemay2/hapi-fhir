@@ -1,14 +1,22 @@
 package ca.uhn.fhir.jpa.dao.r4;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
-
-import javax.persistence.EntityManager;
-
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.jpa.config.TestR4WithoutLuceneConfig;
+import ca.uhn.fhir.jpa.dao.*;
+import ca.uhn.fhir.jpa.search.ISearchCoordinatorSvc;
+import ca.uhn.fhir.jpa.search.reindex.IResourceReindexingSvc;
+import ca.uhn.fhir.jpa.searchparam.registry.ISearchParamRegistry;
+import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
+import ca.uhn.fhir.jpa.sp.ISearchParamPresenceSvc;
+import ca.uhn.fhir.rest.param.StringParam;
+import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+import ca.uhn.fhir.util.TestUtil;
 import org.hl7.fhir.instance.model.api.IIdType;
 import org.hl7.fhir.r4.hapi.ctx.IValidationSupport;
 import org.hl7.fhir.r4.model.*;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Before;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -17,24 +25,24 @@ import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 
-import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.jpa.config.TestR4WithoutLuceneConfig;
-import ca.uhn.fhir.jpa.dao.*;
-import ca.uhn.fhir.jpa.provider.r4.JpaSystemProviderR4;
-import ca.uhn.fhir.jpa.search.ISearchCoordinatorSvc;
-import ca.uhn.fhir.jpa.sp.ISearchParamPresenceSvc;
-import ca.uhn.fhir.rest.param.StringParam;
-import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
-import ca.uhn.fhir.util.TestUtil;
+import javax.persistence.EntityManager;
 
-// @RunWith(SpringJUnit4ClassRunner.class)
-// @ContextConfiguration(classes= {TestR4WithoutLuceneConfig.class})
-// @SuppressWarnings("unchecked")
+import static org.junit.Assert.*;
+
 @RunWith(SpringJUnit4ClassRunner.class)
-@ContextConfiguration(classes = { TestR4WithoutLuceneConfig.class })
+@ContextConfiguration(classes = {TestR4WithoutLuceneConfig.class})
 public class FhirResourceDaoR4SearchWithLuceneDisabledTest extends BaseJpaTest {
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(FhirResourceDaoR4SearchWithLuceneDisabledTest.class);
-
+	@Autowired
+	protected DaoConfig myDaoConfig;
+	@Autowired
+	protected PlatformTransactionManager myTxManager;
+	@Autowired
+	protected ISearchParamPresenceSvc mySearchParamPresenceSvc;
+	@Autowired
+	protected ISearchCoordinatorSvc mySearchCoordinatorSvc;
+	@Autowired
+	protected ISearchParamRegistry mySearchParamRegistry;
 	@Autowired
 	@Qualifier("myAllergyIntoleranceDaoR4")
 	private IFhirResourceDao<AllergyIntolerance> myAllergyIntoleranceDao;
@@ -63,8 +71,6 @@ public class FhirResourceDaoR4SearchWithLuceneDisabledTest extends BaseJpaTest {
 	@Qualifier("myConditionDaoR4")
 	private IFhirResourceDao<Condition> myConditionDao;
 	@Autowired
-	protected DaoConfig myDaoConfig;
-	@Autowired
 	@Qualifier("myDeviceDaoR4")
 	private IFhirResourceDao<Device> myDeviceDao;
 	@Autowired
@@ -79,81 +85,20 @@ public class FhirResourceDaoR4SearchWithLuceneDisabledTest extends BaseJpaTest {
 	@Autowired
 	private FhirContext myFhirCtx;
 	@Autowired
-	@Qualifier("myImmunizationDaoR4")
-	private IFhirResourceDao<Immunization> myImmunizationDao;
-	@Autowired
-	@Qualifier("myLocationDaoR4")
-	private IFhirResourceDao<Location> myLocationDao;
-	@Autowired
-	@Qualifier("myMediaDaoR4")
-	private IFhirResourceDao<Media> myMediaDao;
-	@Autowired
-	@Qualifier("myMedicationDaoR4")
-	private IFhirResourceDao<Medication> myMedicationDao;
-	@Autowired
-	@Qualifier("myMedicationRequestDaoR4")
-	private IFhirResourceDao<MedicationRequest> myMedicationRequestDao;
-	@Autowired
-	@Qualifier("myNamingSystemDaoR4")
-	private IFhirResourceDao<NamingSystem> myNamingSystemDao;
-	@Autowired
-	@Qualifier("myObservationDaoR4")
-	private IFhirResourceDao<Observation> myObservationDao;
-	@Autowired
-	@Qualifier("myOperationDefinitionDaoR4")
-	private IFhirResourceDao<OperationDefinition> myOperationDefinitionDao;
-	@Autowired
 	@Qualifier("myOrganizationDaoR4")
 	private IFhirResourceDao<Organization> myOrganizationDao;
-	@Autowired
-	@Qualifier("myPatientDaoR4")
-	private IFhirResourceDaoPatient<Patient> myPatientDao;
-	@Autowired
-	@Qualifier("myPractitionerDaoR4")
-	private IFhirResourceDao<Practitioner> myPractitionerDao;
-	@Autowired
-	@Qualifier("myQuestionnaireDaoR4")
-	private IFhirResourceDao<Questionnaire> myQuestionnaireDao;
-	@Autowired
-	@Qualifier("myQuestionnaireResponseDaoR4")
-	private IFhirResourceDao<QuestionnaireResponse> myQuestionnaireResponseDao;
-	@Autowired
-	@Qualifier("myResourceProvidersR4")
-	private Object myResourceProviders;
-	@Autowired
-	@Qualifier("myStructureDefinitionDaoR4")
-	private IFhirResourceDao<StructureDefinition> myStructureDefinitionDao;
-	@Autowired
-	@Qualifier("mySubscriptionDaoR4")
-	private IFhirResourceDaoSubscription<Subscription> mySubscriptionDao;
-	@Autowired
-	@Qualifier("mySubstanceDaoR4")
-	private IFhirResourceDao<Substance> mySubstanceDao;
-	@Autowired
-	@Qualifier("mySystemDaoR4")
-	private IFhirSystemDao<Bundle, Meta> mySystemDao;
-	@Autowired
-	@Qualifier("mySystemProviderR4")
-	private JpaSystemProviderR4 mySystemProvider;
-
-	@Autowired
-	protected PlatformTransactionManager myTxManager;
-	@Autowired
-	protected ISearchParamPresenceSvc mySearchParamPresenceSvc;
-
 	@Autowired
 	@Qualifier("myJpaValidationSupportChainR4")
 	private IValidationSupport myValidationSupport;
 	@Autowired
-	protected ISearchCoordinatorSvc mySearchCoordinatorSvc;
+	private IFhirSystemDao<Bundle, Meta> mySystemDao;
 	@Autowired
-	protected ISearchParamRegistry mySearchParamRegistry;
+	private IResourceReindexingSvc myResourceReindexingSvc;
 
 	@Before
 	@Transactional()
 	public void beforePurgeDatabase() {
-		final EntityManager entityManager = this.myEntityManager;
-		purgeDatabase(entityManager, myTxManager, mySearchParamPresenceSvc, mySearchCoordinatorSvc, mySearchParamRegistry);
+		purgeDatabase(myDaoConfig, mySystemDao, myResourceReindexingSvc, mySearchCoordinatorSvc, mySearchParamRegistry);
 	}
 
 	@Before
@@ -164,26 +109,17 @@ public class FhirResourceDaoR4SearchWithLuceneDisabledTest extends BaseJpaTest {
 	}
 
 	@Override
+	protected PlatformTransactionManager getTxManager() {
+		return myTxManager;
+	}
+
+	@Override
 	protected FhirContext getContext() {
 		return myFhirCtx;
 	}
 
 	@Test
-	public void testSearchWithRegularParam() throws Exception {
-		String methodName = "testEverythingIncludesBackReferences";
-
-		Organization org = new Organization();
-		org.setName(methodName);
-		IIdType orgId = myOrganizationDao.create(org, mySrd).getId().toUnqualifiedVersionless();
-
-		SearchParameterMap map = new SearchParameterMap();
-		map.add(Organization.SP_NAME, new StringParam(methodName));
-		myOrganizationDao.search(map);
-		
-	}
-
-	@Test
-	public void testSearchWithContent() throws Exception {
+	public void testSearchWithContent() {
 		String methodName = "testEverythingIncludesBackReferences";
 
 		Organization org = new Organization();
@@ -201,7 +137,21 @@ public class FhirResourceDaoR4SearchWithLuceneDisabledTest extends BaseJpaTest {
 	}
 
 	@Test
-	public void testSearchWithText() throws Exception {
+	public void testSearchWithRegularParam() {
+		String methodName = "testEverythingIncludesBackReferences";
+
+		Organization org = new Organization();
+		org.setName(methodName);
+		IIdType orgId = myOrganizationDao.create(org, mySrd).getId().toUnqualifiedVersionless();
+
+		SearchParameterMap map = new SearchParameterMap();
+		map.add(Organization.SP_NAME, new StringParam(methodName));
+		myOrganizationDao.search(map);
+
+	}
+
+	@Test
+	public void testSearchWithText() {
 		String methodName = "testEverythingIncludesBackReferences";
 
 		Organization org = new Organization();

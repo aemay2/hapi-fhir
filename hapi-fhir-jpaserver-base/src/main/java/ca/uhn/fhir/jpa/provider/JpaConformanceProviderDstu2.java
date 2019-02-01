@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.provider;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2017 University Health Network
+ * Copyright (C) 2014 - 2019 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,8 @@ import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.context.RuntimeSearchParam;
 import ca.uhn.fhir.jpa.dao.DaoConfig;
 import ca.uhn.fhir.jpa.dao.IFhirSystemDao;
+import ca.uhn.fhir.jpa.util.ResourceCountCache;
+import ca.uhn.fhir.jpa.util.SingleItemLoadingCache;
 import ca.uhn.fhir.model.dstu2.composite.MetaDt;
 import ca.uhn.fhir.model.dstu2.resource.Bundle;
 import ca.uhn.fhir.model.dstu2.resource.Conformance;
@@ -44,6 +46,8 @@ import ca.uhn.fhir.rest.server.provider.dstu2.ServerConformanceProvider;
 import ca.uhn.fhir.util.CoverageIgnore;
 import ca.uhn.fhir.util.ExtensionConstants;
 
+import static org.apache.commons.lang3.ObjectUtils.defaultIfNull;
+
 public class JpaConformanceProviderDstu2 extends ServerConformanceProvider {
 
 	private volatile Conformance myCachedValue;
@@ -52,6 +56,7 @@ public class JpaConformanceProviderDstu2 extends ServerConformanceProvider {
 	private boolean myIncludeResourceCounts;
 	private RestfulServer myRestfulServer;
 	private IFhirSystemDao<Bundle, MetaDt> mySystemDao;
+	private ResourceCountCache myResourceCountsCache;
 
 	/**
 	 * Constructor
@@ -79,10 +84,11 @@ public class JpaConformanceProviderDstu2 extends ServerConformanceProvider {
 	public Conformance getServerConformance(HttpServletRequest theRequest) {
 		Conformance retVal = myCachedValue;
 
-		Map<String, Long> counts = Collections.emptyMap();
+		Map<String, Long> counts = null;
 		if (myIncludeResourceCounts) {
-			counts = mySystemDao.getResourceCounts();
+			counts = mySystemDao.getResourceCountsFromCache();
 		}
+		counts = defaultIfNull(counts, Collections.emptyMap());
 
 		FhirContext ctx = myRestfulServer.getFhirContext();
 

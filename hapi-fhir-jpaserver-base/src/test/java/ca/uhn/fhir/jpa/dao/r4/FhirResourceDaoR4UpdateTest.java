@@ -1,31 +1,39 @@
 package ca.uhn.fhir.jpa.dao.r4;
 
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
-import static org.mockito.Matchers.eq;
-import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.verify;
-
-import java.util.*;
-
-import net.ttddyy.dsproxy.QueryCountHolder;
-import org.hl7.fhir.r4.model.*;
-import org.hl7.fhir.instance.model.api.IBaseResource;
-import org.hl7.fhir.instance.model.api.IIdType;
-import org.junit.*;
-import org.mockito.ArgumentCaptor;
-
 import ca.uhn.fhir.jpa.dao.DaoConfig;
-import ca.uhn.fhir.jpa.dao.SearchParameterMap;
+import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
+import ca.uhn.fhir.jpa.util.TestUtil;
 import ca.uhn.fhir.model.primitive.InstantDt;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
 import ca.uhn.fhir.rest.param.StringParam;
-import ca.uhn.fhir.rest.server.exceptions.*;
+import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+import ca.uhn.fhir.rest.server.exceptions.ResourceGoneException;
+import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
+import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.rest.server.interceptor.IServerInterceptor.ActionRequestDetails;
-import ca.uhn.fhir.util.TestUtil;
+import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.instance.model.api.IIdType;
+import org.hl7.fhir.r4.model.*;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Ignore;
+import org.junit.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.test.context.TestPropertySource;
 
+import java.util.*;
+
+import static org.hamcrest.Matchers.*;
+import static org.junit.Assert.*;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
+
+@TestPropertySource(properties = {
+	"scheduling_disabled=true"
+})
 public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(FhirResourceDaoR4UpdateTest.class);
 
@@ -36,7 +44,7 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 	}
 
 	@Test
-	public void testCreateAndUpdateWithoutRequest() throws Exception {
+	public void testCreateAndUpdateWithoutRequest() {
 		String methodName = "testUpdateByUrl";
 
 		Patient p = new Patient();
@@ -85,10 +93,10 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 			Patient patient = new Patient();
 			patient.addName().setFamily(name);
 
-			List<IdType> tl = new ArrayList<IdType>();
-			tl.add(new IdType("http://foo/bar"));
-			tl.add(new IdType("http://foo/bar"));
-			tl.add(new IdType("http://foo/bar"));
+			List<CanonicalType> tl = new ArrayList<>();
+			tl.add(new CanonicalType("http://foo/bar"));
+			tl.add(new CanonicalType("http://foo/bar"));
+			tl.add(new CanonicalType("http://foo/bar"));
 			patient.getMeta().getProfile().addAll(tl);
 
 			id = myPatientDao.create(patient, mySrd).getId().toUnqualifiedVersionless();
@@ -97,7 +105,7 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 		// Do a read
 		{
 			Patient patient = myPatientDao.read(id, mySrd);
-			List<UriType> tl = patient.getMeta().getProfile();
+			List<CanonicalType> tl = patient.getMeta().getProfile();
 			assertEquals(1, tl.size());
 			assertEquals("http://foo/bar", tl.get(0).getValue());
 		}
@@ -305,12 +313,15 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 
 		assertEquals("1", outcome.getId().getVersionIdPart());
 
+		TestUtil.sleepOneClick();
+
 		Date now = new Date();
+
 		Patient retrieved = myPatientDao.read(outcome.getId(), mySrd);
-		InstantType updated = retrieved.getMeta().getLastUpdatedElement().copy();
+		InstantType updated = TestUtil.getTimestamp(retrieved);
 		assertTrue(updated.before(now));
 
-		Thread.sleep(1000);
+		TestUtil.sleepOneClick();
 
 		reset(myInterceptor);
 		retrieved.getIdentifier().get(0).setValue("002");
@@ -327,17 +338,18 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 		assertEquals("Patient", details.getResourceType());
 		assertEquals(Patient.class, details.getResource().getClass());
 
+		TestUtil.sleepOneClick();
 		Date now2 = new Date();
 
 		Patient retrieved2 = myPatientDao.read(outcome.getId().toVersionless(), mySrd);
 
 		assertEquals("2", retrieved2.getIdElement().getVersionIdPart());
 		assertEquals("002", retrieved2.getIdentifier().get(0).getValue());
-		InstantType updated2 = retrieved2.getMeta().getLastUpdatedElement();
+		InstantType updated2 = TestUtil.getTimestamp(retrieved2);
 		assertTrue(updated2.after(now));
 		assertTrue(updated2.before(now2));
 
-		Thread.sleep(2000);
+		TestUtil.sleepOneClick();
 
 		/*
 		 * Get history
@@ -584,7 +596,7 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 				secListValues.add(next.getSystemElement().getValue() + "|" + next.getCodeElement().getValue());
 			}
 			assertThat(secListValues, containsInAnyOrder("sec_scheme1|sec_term1", "sec_scheme2|sec_term2"));
-			List<UriType> profileList = p1.getMeta().getProfile();
+			List<CanonicalType> profileList = p1.getMeta().getProfile();
 			assertEquals(1, profileList.size());
 			assertEquals("http://foo2", profileList.get(0).getValueAsString()); // no foo1
 		}
@@ -598,8 +610,8 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 			Patient patient = new Patient();
 			patient.addName().setFamily(name);
 
-			List<IdType> tl = new ArrayList<IdType>();
-			tl.add(new IdType("http://foo/bar"));
+			List<CanonicalType> tl = new ArrayList<>();
+			tl.add(new CanonicalType("http://foo/bar"));
 			patient.getMeta().getProfile().addAll(tl);
 
 			id = myPatientDao.create(patient, mySrd).getId().toUnqualifiedVersionless();
@@ -608,7 +620,7 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 		// Do a read
 		{
 			Patient patient = myPatientDao.read(id, mySrd);
-			List<UriType> tl = patient.getMeta().getProfile();
+			List<CanonicalType> tl = patient.getMeta().getProfile();
 			assertEquals(1, tl.size());
 			assertEquals("http://foo/bar", tl.get(0).getValue());
 		}
@@ -619,8 +631,8 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 			patient.setId(id);
 			patient.addName().setFamily(name);
 
-			List<IdType> tl = new ArrayList<IdType>();
-			tl.add(new IdType("http://foo/baz"));
+			List<CanonicalType> tl = new ArrayList<>();
+			tl.add(new CanonicalType("http://foo/baz"));
 			patient.getMeta().getProfile().clear();
 			patient.getMeta().getProfile().addAll(tl);
 
@@ -630,7 +642,7 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 		// Do a read
 		{
 			Patient patient = myPatientDao.read(id, mySrd);
-			List<UriType> tl = patient.getMeta().getProfile();
+			List<CanonicalType> tl = patient.getMeta().getProfile();
 			assertEquals(1, tl.size());
 			assertEquals("http://foo/baz", tl.get(0).getValue());
 		}
@@ -662,31 +674,6 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 			ourLog.error("Good", e);
 		}
 
-	}
-
-	@Test
-	public void testUpdateReusesIndexes() {
-		myDaoConfig.setIndexMissingFields(DaoConfig.IndexEnabledEnum.DISABLED);
-
-		QueryCountHolder.clear();
-
-		Patient pt = new Patient();
-		pt.setActive(true);
-		pt.addName().setFamily("FAMILY1").addGiven("GIVEN1A").addGiven("GIVEN1B");
-		IIdType id = myPatientDao.create(pt).getId().toUnqualifiedVersionless();
-
-		ourLog.info("Now have {} deleted", QueryCountHolder.getGrandTotal().getDelete());
-		ourLog.info("Now have {} inserts", QueryCountHolder.getGrandTotal().getInsert());
-		QueryCountHolder.clear();
-
-		pt.setId(id);
-		pt.getNameFirstRep().addGiven("GIVEN1C");
-		myPatientDao.update(pt);
-
-		ourLog.info("Now have {} deleted", QueryCountHolder.getGrandTotal().getDelete());
-		ourLog.info("Now have {} inserts", QueryCountHolder.getGrandTotal().getInsert());
-		assertEquals(0, QueryCountHolder.getGrandTotal().getDelete());
-		assertEquals(4, QueryCountHolder.getGrandTotal().getInsert());
 	}
 
 	@Test

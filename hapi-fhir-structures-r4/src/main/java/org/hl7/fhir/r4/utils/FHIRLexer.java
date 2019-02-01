@@ -36,9 +36,17 @@ public class FHIRLexer {
   private SourceLocation currentLocation;
   private SourceLocation currentStartLocation;
   private int id;
+  private String name;
 
-  public FHIRLexer(String source) throws FHIRLexerException {
+  public FHIRLexer(String source, String name) throws FHIRLexerException {
     this.source = source;
+    this.name = name == null ? "??" : name;
+    currentLocation = new SourceLocation(1, 1);
+    next();
+  }
+  public FHIRLexer(String source, int i) throws FHIRLexerException {
+    this.source = source;
+    this.cursor = i;
     currentLocation = new SourceLocation(1, 1);
     next();
   }
@@ -50,9 +58,9 @@ public class FHIRLexer {
   }
 
   public boolean isConstant(boolean incDoubleQuotes) {
-    return current.charAt(0) == '\'' || (incDoubleQuotes && current.charAt(0) == '"') || current.charAt(0) == '@' || current.charAt(0) == '%' || 
+    return current != null && (current.charAt(0) == '\'' || (incDoubleQuotes && current.charAt(0) == '"') || current.charAt(0) == '@' || current.charAt(0) == '%' || 
         current.charAt(0) == '-' || current.charAt(0) == '+' || (current.charAt(0) >= '0' && current.charAt(0) <= '9') || 
-        current.equals("true") || current.equals("false") || current.equals("{}");
+        current.equals("true") || current.equals("false") || current.equals("{}"));
   }
 
   public boolean isStringConstant() {
@@ -98,7 +106,7 @@ public class FHIRLexer {
   }
 
   public FHIRLexerException error(String msg, String location) {
-    return new FHIRLexerException("Error at "+location+": "+msg);
+    return new FHIRLexerException("Error in "+name+" at "+location+": "+msg);
   }
 
   public void next() throws FHIRLexerException {
@@ -125,7 +133,7 @@ public class FHIRLexer {
       char ch = source.charAt(cursor);
       if (ch == '!' || ch == '>' || ch == '<' || ch == ':' || ch == '-' || ch == '=')  {
         cursor++;
-        if (cursor < source.length() && (source.charAt(cursor) == '=' || source.charAt(cursor) == '~' || source.charAt(cursor) == '-')) 
+        if (cursor < source.length() && (source.charAt(cursor) == '=' || source.charAt(cursor) == '~' || source.charAt(cursor) == '-') || (ch == '-' && source.charAt(cursor) == '>')) 
           cursor++;
         current = source.substring(currentStart, cursor);
       } else if (ch == '.' ) {
@@ -212,8 +220,9 @@ public class FHIRLexer {
         if (ech == '\'')
           current = "\'"+current.substring(1, current.length() - 1)+"\'";
       } else if (ch == '@'){
+        int start = cursor;
         cursor++;
-        while (cursor < source.length() && isDateChar(source.charAt(cursor)))
+        while (cursor < source.length() && isDateChar(source.charAt(cursor), start))
           cursor++;          
         current = source.substring(currentStart, cursor);
       } else { // if CharInSet(ch, ['.', ',', '(', ')', '=', '$']) then
@@ -224,8 +233,10 @@ public class FHIRLexer {
   }
 
 
-  private boolean isDateChar(char ch) {
-    return ch == '-' || ch == ':' || ch == 'T' || ch == '+' || ch == 'Z' || Character.isDigit(ch);
+  private boolean isDateChar(char ch,int start) {
+    int eot = source.charAt(start+1) == 'T' ? 10 : 20;
+    
+    return ch == '-' || ch == ':' || ch == 'T' || ch == '+' || ch == 'Z' || Character.isDigit(ch) || (cursor-start == eot && ch == '.' && cursor < source.length()-1&& Character.isDigit(source.charAt(cursor+1)));
   }
   public boolean isOp() {
     return ExpressionNode.Operation.fromCode(current) != null;
@@ -297,6 +308,9 @@ public class FHIRLexer {
         case '\'':
           b.append('\'');
           break;
+        case '"':
+          b.append('"');
+          break;
         case '\\': 
           b.append('\\');
           break;
@@ -338,6 +352,9 @@ public class FHIRLexer {
   void skipComments() throws FHIRLexerException {
     while (!done() && hasComment())
       next();
+  }
+  public int getCurrentStart() {
+    return currentStart;
   }
 
 }

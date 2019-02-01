@@ -4,7 +4,7 @@ package ca.uhn.fhir.rest.server.method;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2017 University Health Network
+ * Copyright (C) 2014 - 2019 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,26 @@ package ca.uhn.fhir.rest.server.method;
  * limitations under the License.
  * #L%
  */
-import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.FhirVersionEnum;
+import ca.uhn.fhir.parser.DataFormatException;
+import ca.uhn.fhir.parser.IParser;
+import ca.uhn.fhir.rest.api.Constants;
+import ca.uhn.fhir.rest.api.EncodingEnum;
+import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
+import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.server.IResourceProvider;
+import ca.uhn.fhir.rest.server.RestfulServerUtils;
+import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
+import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+import ca.uhn.fhir.util.BinaryUtil;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.Validate;
+import org.hl7.fhir.instance.model.api.IBaseBinary;
+import org.hl7.fhir.instance.model.api.IBaseResource;
+
+import javax.annotation.Nonnull;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -30,39 +48,22 @@ import java.lang.reflect.Modifier;
 import java.nio.charset.Charset;
 import java.util.Collection;
 
-import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang3.Validate;
-import org.hl7.fhir.instance.model.api.IBaseBinary;
-import org.hl7.fhir.instance.model.api.IBaseResource;
-
-import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.context.FhirVersionEnum;
-import ca.uhn.fhir.model.api.IResource;
-import ca.uhn.fhir.model.api.ResourceMetadataKeyEnum;
-import ca.uhn.fhir.model.api.TagList;
-import ca.uhn.fhir.parser.DataFormatException;
-import ca.uhn.fhir.parser.IParser;
-import ca.uhn.fhir.rest.api.Constants;
-import ca.uhn.fhir.rest.api.EncodingEnum;
-import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
-import ca.uhn.fhir.rest.api.server.RequestDetails;
-import ca.uhn.fhir.rest.param.ParameterUtil;
-import ca.uhn.fhir.rest.server.IResourceProvider;
-import ca.uhn.fhir.rest.server.RestfulServerUtils;
-import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
-import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+import static org.apache.commons.lang3.StringUtils.isBlank;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 public class ResourceParameter implements IParameter {
 
+	private final boolean myMethodIsOperation;
 	private Mode myMode;
 	private Class<? extends IBaseResource> myResourceType;
 
-	public ResourceParameter(Class<? extends IBaseResource> theParameterType, Object theProvider, Mode theMode) {
+	public ResourceParameter(Class<? extends IBaseResource> theParameterType, Object theProvider, Mode theMode, boolean theMethodIsOperation) {
 		Validate.notNull(theParameterType, "theParameterType can not be null");
 		Validate.notNull(theMode, "theMode can not be null");
 
 		myResourceType = theParameterType;
 		myMode = theMode;
+		myMethodIsOperation = theMethodIsOperation;
 
 		Class<? extends IBaseResource> providerResourceType = null;
 		if (theProvider instanceof IResourceProvider) {
@@ -92,22 +93,31 @@ public class ResourceParameter implements IParameter {
 	@Override
 	public Object translateQueryParametersIntoServerArgument(RequestDetails theRequest, BaseMethodBinding<?> theMethodBinding) throws InternalErrorException, InvalidRequestException {
 		switch (myMode) {
-		case BODY:
-			try {
-				return IOUtils.toString(createRequestReader(theRequest));
-			} catch (IOException e) {
-				// Shouldn't happen since we're reading from a byte array
-				throw new InternalErrorException("Failed to load request", e);
-			}
-		case BODY_BYTE_ARRAY:
-			return theRequest.loadRequestContents();
-		case ENCODING:
-			return RestfulServerUtils.determineRequestEncodingNoDefault(theRequest);
-		case RESOURCE:
-		default:
-			return parseResourceFromRequest(theRequest, theMethodBinding, myResourceType);
+			case BODY:
+				try {
+					return IOUtils.toString(createRequestReader(theRequest));
+				} catch (IOException e) {
+					// Shouldn't happen since we're reading from a byte array
+					throw new InternalErrorException("Failed to load request", e);
+				}
+			case BODY_BYTE_ARRAY:
+				return theRequest.loadRequestContents();
+			case ENCODING:
+				return RestfulServerUtils.determineRequestEncodingNoDefault(theRequest);
+			case RESOURCE:
+			default:
+				Class<? extends IBaseResource> resourceTypeToParse = myResourceType;
+				if (myMethodIsOperation) {
+					// Operations typically have a Parameters resource as the body
+					resourceTypeToParse = null;
+				}
+				return parseResourceFromRequest(theRequest, theMethodBinding, resourceTypeToParse);
 		}
 		// }
+	}
+
+	public enum Mode {
+		BODY, BODY_BYTE_ARRAY, ENCODING, RESOURCE
 	}
 
 	public static Reader createRequestReader(RequestDetails theRequest, Charset charset) {
@@ -120,7 +130,7 @@ public class ResourceParameter implements IParameter {
 	}
 
 	public static Charset determineRequestCharset(RequestDetails theRequest) {
-		Charset charset =  theRequest.getCharset();
+		Charset charset = theRequest.getCharset();
 		if (charset == null) {
 			charset = Charset.forName("UTF-8");
 		}
@@ -128,7 +138,7 @@ public class ResourceParameter implements IParameter {
 	}
 
 	@SuppressWarnings("unchecked")
-	public static <T extends IBaseResource> T loadResourceFromRequest(RequestDetails theRequest, BaseMethodBinding<?> theMethodBinding, Class<T> theResourceType) {
+	public static <T extends IBaseResource> T loadResourceFromRequest(RequestDetails theRequest, @Nonnull BaseMethodBinding<?> theMethodBinding, Class<T> theResourceType) {
 		FhirContext ctx = theRequest.getServer().getFhirContext();
 
 		final Charset charset = determineRequestCharset(theRequest);
@@ -141,7 +151,6 @@ public class ResourceParameter implements IParameter {
 			String ctValue = theRequest.getHeader(Constants.HEADER_CONTENT_TYPE);
 			if (ctValue != null) {
 				if (ctValue.startsWith("application/x-www-form-urlencoded")) {
-					//FIXME potential null access theMethodBinding
 					String msg = theRequest.getServer().getFhirContext().getLocalizer().getMessage(ResourceParameter.class, "invalidContentTypeInRequest", ctValue, theMethodBinding.getRestOperationType());
 					throw new InvalidRequestException(msg);
 				}
@@ -157,6 +166,9 @@ public class ResourceParameter implements IParameter {
 					// This shouldn't happen since we're reading from a byte array..
 					throw new InternalErrorException(e);
 				}
+				if (isBlank(body)) {
+					return null;
+				}
 				encoding = EncodingEnum.detectEncodingNoDefault(body);
 				if (encoding == null) {
 					String msg = ctx.getLocalizer().getMessage(ResourceParameter.class, "noContentTypeInRequest", restOperationType);
@@ -170,7 +182,7 @@ public class ResourceParameter implements IParameter {
 		}
 
 		IParser parser = encoding.newParser(ctx);
-    parser.setServerBaseUrl(theRequest.getFhirServerBase());
+		parser.setServerBaseUrl(theRequest.getFhirServerBase());
 		T retVal;
 		try {
 			if (theResourceType != null) {
@@ -182,33 +194,40 @@ public class ResourceParameter implements IParameter {
 			String msg = ctx.getLocalizer().getMessage(ResourceParameter.class, "failedToParseRequest", encoding.name(), e.getMessage());
 			throw new InvalidRequestException(msg);
 		}
-		
+
 		return retVal;
 	}
 
 	public static IBaseResource parseResourceFromRequest(RequestDetails theRequest, BaseMethodBinding<?> theMethodBinding, Class<? extends IBaseResource> theResourceType) {
 		IBaseResource retVal = null;
-		
-		if (IBaseBinary.class.isAssignableFrom(theResourceType)) {
+
+		if (theResourceType != null && IBaseBinary.class.isAssignableFrom(theResourceType)) {
 			String ct = theRequest.getHeader(Constants.HEADER_CONTENT_TYPE);
 			if (EncodingEnum.forContentTypeStrict(ct) == null) {
 				FhirContext ctx = theRequest.getServer().getFhirContext();
-				IBaseBinary binary = (IBaseBinary) ctx.getResourceDefinition("Binary").newInstance();
+				IBaseBinary binary = BinaryUtil.newBinary(ctx);
 				binary.setId(theRequest.getId());
 				binary.setContentType(ct);
 				binary.setContent(theRequest.loadRequestContents());
 				retVal = binary;
+
+				/*
+				 * Security context header, which is only in
+				 * DSTU3+
+				 */
+				if (ctx.getVersion().getVersion().isEqualOrNewerThan(FhirVersionEnum.DSTU3)) {
+					String securityContext = theRequest.getHeader(Constants.HEADER_X_SECURITY_CONTEXT);
+					if (isNotBlank(securityContext)) {
+						BinaryUtil.setSecurityContext(ctx, binary, securityContext);
+					}
+				}
 			}
 		}
-		
+
 		if (retVal == null) {
 			retVal = loadResourceFromRequest(theRequest, theMethodBinding, theResourceType);
 		}
 		return retVal;
-	}
-
-	public enum Mode {
-		BODY, BODY_BYTE_ARRAY, ENCODING, RESOURCE
 	}
 
 }
