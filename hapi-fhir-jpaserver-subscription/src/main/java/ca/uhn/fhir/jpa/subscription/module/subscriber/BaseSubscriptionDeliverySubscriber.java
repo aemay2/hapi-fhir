@@ -21,6 +21,10 @@ package ca.uhn.fhir.jpa.subscription.module.subscriber;
  */
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.interceptor.api.HookParams;
+import ca.uhn.fhir.interceptor.api.IInterceptorBroadcaster;
+import ca.uhn.fhir.interceptor.api.Pointcut;
+import ca.uhn.fhir.jpa.subscription.module.CanonicalSubscription;
 import ca.uhn.fhir.jpa.subscription.module.cache.ActiveSubscription;
 import ca.uhn.fhir.jpa.subscription.module.cache.SubscriptionRegistry;
 import org.slf4j.Logger;
@@ -37,6 +41,8 @@ public abstract class BaseSubscriptionDeliverySubscriber implements MessageHandl
 	protected FhirContext myFhirContext;
 	@Autowired
 	protected SubscriptionRegistry mySubscriptionRegistry;
+	@Autowired
+	private IInterceptorBroadcaster myInterceptorBroadcaster;
 
 	@Override
 	public void handleMessage(Message theMessage) throws MessagingException {
@@ -45,22 +51,47 @@ public abstract class BaseSubscriptionDeliverySubscriber implements MessageHandl
 			return;
 		}
 
-		String subscriptionId = "(unknown?)";
+		ResourceDeliveryMessage msg = (ResourceDeliveryMessage) theMessage.getPayload();
+		String subscriptionId = msg.getSubscriptionId(myFhirContext);
+		if (subscriptionId == null) {
+			ourLog.warn("Subscription has no ID, ignoring");
+			return;
+		}
+
+		ActiveSubscription updatedSubscription = mySubscriptionRegistry.get(msg.getSubscription().getIdElement(myFhirContext).getIdPart());
+		if (updatedSubscription != null) {
+			msg.setSubscription(updatedSubscription.getSubscription());
+		}
 
 		try {
-			ResourceDeliveryMessage msg = (ResourceDeliveryMessage) theMessage.getPayload();
-			subscriptionId = msg.getSubscription().getIdElement(myFhirContext).getValue();
 
-			ActiveSubscription updatedSubscription = mySubscriptionRegistry.get(msg.getSubscription().getIdElement(myFhirContext).getIdPart());
-			if (updatedSubscription != null) {
-				msg.setSubscription(updatedSubscription.getSubscription());
+			// Interceptor call: SUBSCRIPTION_BEFORE_DELIVERY
+			HookParams params = new HookParams()
+				.add(ResourceDeliveryMessage.class, msg)
+				.add(CanonicalSubscription.class, msg.getSubscription());
+			if (!myInterceptorBroadcaster.callHooks(Pointcut.SUBSCRIPTION_BEFORE_DELIVERY, params)) {
+				return;
 			}
 
 			handleMessage(msg);
+
+			// Interceptor call: SUBSCRIPTION_AFTER_DELIVERY
+			myInterceptorBroadcaster.callHooks(Pointcut.SUBSCRIPTION_AFTER_DELIVERY, params);
+
 		} catch (Exception e) {
-			String msg = "Failure handling subscription payload for subscription: " + subscriptionId;
-			ourLog.error(msg, e);
-			throw new MessagingException(theMessage, msg, e);
+
+			String errorMsg = "Failure handling subscription payload for subscription: " + subscriptionId;
+			ourLog.error(errorMsg, e);
+
+			// Interceptor call: SUBSCRIPTION_AFTER_DELIVERY
+			HookParams hookParams = new HookParams()
+				.add(ResourceDeliveryMessage.class, msg)
+				.add(Exception.class, e);
+			if (!myInterceptorBroadcaster.callHooks(Pointcut.SUBSCRIPTION_AFTER_DELIVERY_FAILED, hookParams)) {
+				return;
+			}
+
+			throw new MessagingException(theMessage, errorMsg, e);
 		}
 	}
 

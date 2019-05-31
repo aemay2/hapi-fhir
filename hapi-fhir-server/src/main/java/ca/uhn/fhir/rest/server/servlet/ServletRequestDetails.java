@@ -21,11 +21,13 @@ package ca.uhn.fhir.rest.server.servlet;
  */
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.interceptor.api.IInterceptorBroadcaster;
 import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.RestfulServer;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.Validate;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -47,8 +49,8 @@ public class ServletRequestDetails extends RequestDetails {
 	private HttpServletRequest myServletRequest;
 	private HttpServletResponse myServletResponse;
 
-	public ServletRequestDetails() {
-		super();
+	public ServletRequestDetails(IInterceptorBroadcaster theInterceptorBroadcaster) {
+		super(theInterceptorBroadcaster);
 		setResponse(new ServletRestfulResponse(this));
 	}
 
@@ -100,7 +102,19 @@ public class ServletRequestDetails extends RequestDetails {
 	@Override
 	public List<String> getHeaders(String name) {
 		Enumeration<String> headers = getServletRequest().getHeaders(name);
-		return headers == null ? Collections.<String> emptyList() : Collections.list(getServletRequest().getHeaders(name));
+		return headers == null ? Collections.emptyList() : Collections.list(getServletRequest().getHeaders(name));
+	}
+
+	@Override
+	public Object getAttribute(String theAttributeName) {
+		Validate.notBlank(theAttributeName, "theAttributeName must not be null or blank");
+		return getServletRequest().getAttribute(theAttributeName);
+	}
+
+	@Override
+	public void setAttribute(String theAttributeName, Object theAttributeValue) {
+		Validate.notBlank(theAttributeName, "theAttributeName must not be null or blank");
+		getServletRequest().setAttribute(theAttributeName, theAttributeValue);
 	}
 
 	@Override

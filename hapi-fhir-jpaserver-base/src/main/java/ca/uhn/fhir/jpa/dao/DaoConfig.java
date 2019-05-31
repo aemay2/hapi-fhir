@@ -73,6 +73,7 @@ public class DaoConfig {
 		Bundle.BundleType.MESSAGE.toCode()
 	)));
 	private static final Logger ourLog = LoggerFactory.getLogger(DaoConfig.class);
+	private static final int DEFAULT_EXPUNGE_BATCH_SIZE = 800;
 	private IndexEnabledEnum myIndexMissingFieldsEnabled = IndexEnabledEnum.DISABLED;
 
 	/**
@@ -114,7 +115,6 @@ public class DaoConfig {
 	 * update setter javadoc if default changes
 	 */
 	private boolean myIndexContainedResources = true;
-	private List<IServerInterceptor> myInterceptors = new ArrayList<>();
 	/**
 	 * update setter javadoc if default changes
 	 */
@@ -135,13 +135,16 @@ public class DaoConfig {
 	private IdStrategyEnum myResourceServerIdStrategy = IdStrategyEnum.SEQUENTIAL_NUMERIC;
 	private boolean myMarkResourcesForReindexingUponSearchParameterChange;
 	private boolean myExpungeEnabled;
+	private int myExpungeBatchSize = DEFAULT_EXPUNGE_BATCH_SIZE;
 	private int myReindexThreadCount;
+	private int myExpungeThreadCount;
 	private Set<String> myBundleTypesAllowedForStorage;
 	private boolean myValidateSearchParameterExpressionsOnSave = true;
 	private List<Integer> mySearchPreFetchThresholds = Arrays.asList(500, 2000, -1);
 	private List<WarmCacheEntry> myWarmCacheEntries = new ArrayList<>();
 	private boolean myDisableHashBasedSearches;
 	private boolean myEnableInMemorySubscriptionMatching = true;
+	private boolean myEnforceReferenceTargetTypes = true;
 	private ClientIdStrategyEnum myResourceClientIdStrategy = ClientIdStrategyEnum.ALPHANUMERIC;
 
 	/**
@@ -153,12 +156,33 @@ public class DaoConfig {
 		setSubscriptionPurgeInactiveAfterMillis(Long.MAX_VALUE);
 		setMarkResourcesForReindexingUponSearchParameterChange(true);
 		setReindexThreadCount(Runtime.getRuntime().availableProcessors());
+		setExpungeThreadCount(Runtime.getRuntime().availableProcessors());
 		setBundleTypesAllowedForStorage(DEFAULT_BUNDLE_TYPES_ALLOWED_FOR_STORAGE);
 
 		if ("true".equalsIgnoreCase(System.getProperty(DISABLE_STATUS_BASED_REINDEX))) {
 			ourLog.info("Status based reindexing is DISABLED");
 			setStatusBasedReindexingDisabled(true);
 		}
+	}
+
+	/**
+	 * If set to <code>true</code> (default is true) when a resource is being persisted,
+	 * the target resource types of references will be validated to ensure that they
+	 * are appropriate for the field containing the reference. This is generally a good idea
+	 * because invalid reference target types may not be searchable.
+	 */
+	public boolean isEnforceReferenceTargetTypes() {
+		return myEnforceReferenceTargetTypes;
+	}
+
+	/**
+	 * If set to <code>true</code> (default is true) when a resource is being persisted,
+	 * the target resource types of references will be validated to ensure that they
+	 * are appropriate for the field containing the reference. This is generally a good idea
+	 * because invalid reference target types may not be searchable.
+	 */
+	public void setEnforceReferenceTargetTypes(boolean theEnforceReferenceTargetTypes) {
+		myEnforceReferenceTargetTypes = theEnforceReferenceTargetTypes;
 	}
 
 	/**
@@ -507,47 +531,6 @@ public class DaoConfig {
 	}
 
 	/**
-	 * Returns the interceptors which will be notified of operations.
-	 *
-	 * @see #setInterceptors(List)
-	 * @deprecated Marked as deprecated as of HAPI 3.7.0.  Use {@link #registerInterceptor} or {@link #unregisterInterceptor}instead.
-	 */
-
-	@Deprecated
-	public List<IServerInterceptor> getInterceptors() {
-		return myInterceptors;
-	}
-
-	/**
-	 * This may be used to optionally register server interceptors directly against the DAOs.
-	 */
-	public void setInterceptors(List<IServerInterceptor> theInterceptors) {
-		myInterceptors = theInterceptors;
-	}
-
-	/**
-	 * This may be used to optionally register server interceptors directly against the DAOs.
-	 */
-	public void setInterceptors(IServerInterceptor... theInterceptor) {
-		setInterceptors(new ArrayList<>());
-		if (theInterceptor != null && theInterceptor.length != 0) {
-			getInterceptors().addAll(Arrays.asList(theInterceptor));
-		}
-	}
-
-	public void registerInterceptor(IServerInterceptor theInterceptor) {
-		Validate.notNull(theInterceptor, "Interceptor can not be null");
-		if (!myInterceptors.contains(theInterceptor)) {
-			myInterceptors.add(theInterceptor);
-		}
-	}
-
-	public void unregisterInterceptor(IServerInterceptor theInterceptor) {
-		Validate.notNull(theInterceptor, "Interceptor can not be null");
-		myInterceptors.remove(theInterceptor);
-	}
-
-	/**
 	 * See {@link #setMaximumExpansionSize(int)}
 	 */
 	public int getMaximumExpansionSize() {
@@ -620,6 +603,31 @@ public class DaoConfig {
 	public void setReindexThreadCount(int theReindexThreadCount) {
 		myReindexThreadCount = theReindexThreadCount;
 		myReindexThreadCount = Math.max(myReindexThreadCount, 1); // Minimum of 1
+	}
+
+	/**
+	 * This setting controls the number of threads allocated to the expunge operation
+	 * <p>
+	 * The default value is set to the number of available processors
+	 * (via <code>Runtime.getRuntime().availableProcessors()</code>). Value
+	 * for this setting must be a positive integer.
+	 * </p>
+	 */
+	public int getExpungeThreadCount() {
+		return myExpungeThreadCount;
+	}
+
+	/**
+	 * This setting controls the number of threads allocated to the expunge operation
+	 * <p>
+	 * The default value is set to the number of available processors
+	 * (via <code>Runtime.getRuntime().availableProcessors()</code>). Value
+	 * for this setting must be a positive integer.
+	 * </p>
+	 */
+	public void setExpungeThreadCount(int theExpungeThreadCount) {
+		myExpungeThreadCount = theExpungeThreadCount;
+		myExpungeThreadCount = Math.max(myExpungeThreadCount, 1); // Minimum of 1
 	}
 
 	public ResourceEncodingEnum getResourceEncoding() {
@@ -1070,6 +1078,22 @@ public class DaoConfig {
 	}
 
 	/**
+	 * The expunge batch size (default 800) determines the number of records deleted within a single transaction by the
+	 * expunge operation.
+	 */
+	public void setExpungeBatchSize(int theExpungeBatchSize) {
+		myExpungeBatchSize = theExpungeBatchSize;
+	}
+
+	/**
+	 * The expunge batch size (default 800) determines the number of records deleted within a single transaction by the
+	 * expunge operation.
+	 */
+	public int getExpungeBatchSize() {
+		return myExpungeBatchSize;
+	}
+
+	/**
 	 * Should contained IDs be indexed the same way that non-contained IDs are (default is
 	 * <code>true</code>)
 	 */
@@ -1392,6 +1416,7 @@ public class DaoConfig {
 	/**
 	 * If set to <code>true</code> (default is true) the server will match incoming resources against active subscriptions
 	 * and send them to the subscription channel.  If set to <code>false</code> no matching or sending occurs.
+	 *
 	 * @since 3.7.0
 	 */
 
@@ -1402,6 +1427,7 @@ public class DaoConfig {
 	/**
 	 * If set to <code>true</code> (default is true) the server will match incoming resources against active subscriptions
 	 * and send them to the subscription channel.  If set to <code>false</code> no matching or sending occurs.
+	 *
 	 * @since 3.7.0
 	 */
 
@@ -1557,6 +1583,21 @@ public class DaoConfig {
 		myModelConfig.setEmailFromAddress(theEmailFromAddress);
 	}
 
+	/**
+	 * If websocket subscriptions are enabled, this defines the context path that listens to them.  Default value "/websocket".
+	 */
+
+	public String getWebsocketContextPath() {
+		return myModelConfig.getWebsocketContextPath();
+	}
+
+	/**
+	 * If websocket subscriptions are enabled, this defines the context path that listens to them.  Default value "/websocket".
+	 */
+
+	public void setWebsocketContextPath(String theWebsocketContextPath) {
+		myModelConfig.setWebsocketContextPath(theWebsocketContextPath);
+	}
 
 	public enum IndexEnabledEnum {
 		ENABLED,

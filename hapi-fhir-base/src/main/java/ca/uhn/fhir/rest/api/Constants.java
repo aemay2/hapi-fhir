@@ -137,6 +137,7 @@ public class Constants {
 	public static final String PARAM_COUNT = "_count";
 	public static final String PARAM_DELETE = "_delete";
 	public static final String PARAM_ELEMENTS = "_elements";
+	public static final String PARAM_ELEMENTS_EXCLUDE_MODIFIER = ":exclude";
 	public static final String PARAM_FORMAT = "_format";
 	public static final String PARAM_HAS = "_has";
 	public static final String PARAM_HISTORY = "_history";
@@ -205,6 +206,7 @@ public class Constants {
 	 */
 	public static final String TEST_SYSTEM_PROP_VALIDATION_RESOURCE_CACHES_MS = "TEST_SYSTEM_PROP_VALIDATION_RESOURCE_CACHES_MS";
 	public static final String PARAM_SEARCH_TOTAL_MODE = "_total";
+	public static final String CAPABILITYSTATEMENT_WEBSOCKET_URL = "http://hl7.org/fhir/StructureDefinition/capabilitystatement-websocket";
 
 	static {
 		CHARSET_UTF8 = Charset.forName(CHARSET_NAME_UTF8);

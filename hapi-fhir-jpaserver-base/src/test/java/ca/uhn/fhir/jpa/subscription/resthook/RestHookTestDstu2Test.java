@@ -19,7 +19,7 @@ import ca.uhn.fhir.rest.annotation.Update;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.RestfulServer;
-import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.util.PortUtil;
 import com.google.common.collect.Lists;
 import org.eclipse.jetty.server.Server;
@@ -32,7 +32,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
+import static ca.uhn.fhir.jpa.subscription.resthook.RestHookTestDstu3Test.logAllInterceptors;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
@@ -73,7 +75,11 @@ public class RestHookTestDstu2Test extends BaseResourceProviderDstu2Test {
 
 	@Before
 	public void beforeRegisterRestHookListener() {
+		ourLog.info("Before re-registering interceptors");
+		logAllInterceptors(myInterceptorRegistry);
 		mySubscriptionTestUtil.registerRestHookInterceptor();
+		ourLog.info("After re-registering interceptors");
+		logAllInterceptors(myInterceptorRegistry);
 	}
 
 	@Before
@@ -119,8 +125,6 @@ public class RestHookTestDstu2Test extends BaseResourceProviderDstu2Test {
 		return observation;
 	}
 
-	// TODO: re enable
-	@Ignore
 	@Test
 	public void testRestHookSubscriptionInvalidCriteria() throws Exception {
 		String payload = "application/xml";
@@ -130,8 +134,8 @@ public class RestHookTestDstu2Test extends BaseResourceProviderDstu2Test {
 		try {
 			createSubscription(criteria1, payload, ourListenerServerBase);
 			fail();
-		} catch (InvalidRequestException e) {
-			assertEquals("HTTP 400 Bad Request: Invalid criteria: Failed to parse match URL[Observation?codeeeee=SNOMED-CT] - Resource type Observation does not have a parameter with name: codeeeee", e.getMessage());
+		} catch (UnprocessableEntityException e) {
+			assertEquals("HTTP 422 Unprocessable Entity: Invalid subscription criteria submitted: Observation?codeeeee=SNOMED-CT Failed to parse match URL[Observation?codeeeee=SNOMED-CT] - Resource type Observation does not have a parameter with name: codeeeee", e.getMessage());
 		}
 	}
 
@@ -147,6 +151,14 @@ public class RestHookTestDstu2Test extends BaseResourceProviderDstu2Test {
 		Subscription subscription2 = createSubscription(criteria2, payload, ourListenerServerBase);
 
 		Observation observation1 = sendObservation(code, "SNOMED-CT");
+
+		String allInterceptors = myInterceptorRegistry
+			.getAllRegisteredInterceptors()
+			.stream()
+			.map(t->t.getClass().toString())
+			.sorted()
+			.collect(Collectors.joining("\n * "));
+		ourLog.info("Current interceptors:\n * {}", allInterceptors);
 
 		// Should see 1 subscription notification
 		waitForQueueToDrain();

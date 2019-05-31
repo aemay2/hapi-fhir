@@ -75,7 +75,7 @@ public class SubscriptionCheckingSubscriberTest extends BaseBlockingQueueSubscri
 
 		ourObservationListener.setExpectedCount(0);
 		sendObservation(code, "SNOMED-CT");
-		ourObservationListener.expectNothing();
+		ourObservationListener.clear();
 
 		assertEquals(0, ourContentTypes.size());
 	}
@@ -95,7 +95,7 @@ public class SubscriptionCheckingSubscriberTest extends BaseBlockingQueueSubscri
 
 		ourObservationListener.setExpectedCount(1);
 		Observation observation = new Observation();
-		IdType id = new IdType("Observation", idCounter.incrementAndGet());
+		IdType id = new IdType("Observation", nextId());
 		observation.setId(id);
 
 		// Reference has display only!
