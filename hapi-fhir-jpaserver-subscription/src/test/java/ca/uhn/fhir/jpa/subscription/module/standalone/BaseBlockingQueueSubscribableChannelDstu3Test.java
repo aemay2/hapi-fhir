@@ -4,14 +4,20 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.interceptor.api.HookParams;
 import ca.uhn.fhir.interceptor.api.IInterceptorService;
 import ca.uhn.fhir.interceptor.api.Pointcut;
-import ca.uhn.fhir.jpa.model.concurrency.IPointcutLatch;
-import ca.uhn.fhir.jpa.model.concurrency.PointcutLatch;
+import ca.uhn.test.concurrency.IPointcutLatch;
+import ca.uhn.test.concurrency.PointcutLatch;
 import ca.uhn.fhir.jpa.subscription.module.BaseSubscriptionDstu3Test;
+import ca.uhn.fhir.jpa.subscription.module.CanonicalSubscription;
+import ca.uhn.fhir.jpa.subscription.module.CanonicalSubscriptionChannelType;
 import ca.uhn.fhir.jpa.subscription.module.ResourceModifiedMessage;
-import ca.uhn.fhir.jpa.subscription.module.cache.SubscriptionChannelFactory;
+import ca.uhn.fhir.jpa.subscription.module.cache.SubscriptionLoader;
 import ca.uhn.fhir.jpa.subscription.module.cache.SubscriptionRegistry;
+import ca.uhn.fhir.jpa.subscription.module.channel.ISubscriptionDeliveryChannelNamer;
+import ca.uhn.fhir.jpa.subscription.module.channel.SubscriptionChannelFactory;
+import ca.uhn.fhir.jpa.subscription.module.config.MockFhirClientSubscriptionProvider;
 import ca.uhn.fhir.jpa.subscription.module.subscriber.ResourceModifiedJsonMessage;
 import ca.uhn.fhir.jpa.subscription.module.subscriber.SubscriptionMatchingSubscriberTest;
+import ca.uhn.fhir.model.primitive.IdDt;
 import ca.uhn.fhir.rest.annotation.Create;
 import ca.uhn.fhir.rest.annotation.ResourceParam;
 import ca.uhn.fhir.rest.annotation.Update;
@@ -19,7 +25,8 @@ import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.RestfulServer;
-import ca.uhn.fhir.util.PortUtil;
+import ca.uhn.fhir.rest.server.SimpleBundleProvider;
+import ca.uhn.fhir.test.utilities.JettyUtil;
 import com.google.common.collect.Lists;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.servlet.ServletContextHandler;
@@ -54,7 +61,12 @@ public abstract class BaseBlockingQueueSubscribableChannelDstu3Test extends Base
 	IInterceptorService myInterceptorRegistry;
 	@Autowired
 	protected SubscriptionRegistry mySubscriptionRegistry;
-
+	@Autowired
+	private MockFhirClientSubscriptionProvider myMockFhirClientSubscriptionProvider;
+	@Autowired
+	private SubscriptionLoader mySubscriptionLoader;
+	@Autowired
+	private ISubscriptionDeliveryChannelNamer mySubscriptionDeliveryChannelNamer;
 
 	protected String myCode = "1000000050";
 
@@ -62,23 +74,24 @@ public abstract class BaseBlockingQueueSubscribableChannelDstu3Test extends Base
 	private static RestfulServer ourListenerRestServer;
 	private static Server ourListenerServer;
 	protected static String ourListenerServerBase;
-	protected static List<Observation> ourCreatedObservations = Collections.synchronizedList(Lists.newArrayList());
-	protected static List<Observation> ourUpdatedObservations = Collections.synchronizedList(Lists.newArrayList());
-	protected static List<String> ourContentTypes = Collections.synchronizedList(new ArrayList<>());
+	protected static final List<Observation> ourCreatedObservations = Collections.synchronizedList(Lists.newArrayList());
+	protected static final List<Observation> ourUpdatedObservations = Collections.synchronizedList(Lists.newArrayList());
+	protected static final List<String> ourContentTypes = Collections.synchronizedList(new ArrayList<>());
 	private static SubscribableChannel ourSubscribableChannel;
-	protected PointcutLatch mySubscriptionMatchingPost = new PointcutLatch(Pointcut.SUBSCRIPTION_AFTER_PERSISTED_RESOURCE_CHECKED);
-	protected PointcutLatch mySubscriptionActivatedPost = new PointcutLatch(Pointcut.SUBSCRIPTION_AFTER_ACTIVE_SUBSCRIPTION_REGISTERED);
+	protected final PointcutLatch mySubscriptionMatchingPost = new PointcutLatch(Pointcut.SUBSCRIPTION_AFTER_PERSISTED_RESOURCE_CHECKED);
+	protected final PointcutLatch mySubscriptionActivatedPost = new PointcutLatch(Pointcut.SUBSCRIPTION_AFTER_ACTIVE_SUBSCRIPTION_REGISTERED);
 
 	@Before
 	public void beforeReset() {
 		ourCreatedObservations.clear();
 		ourUpdatedObservations.clear();
 		ourContentTypes.clear();
+		CanonicalSubscription canonicalSubscription = new CanonicalSubscription();
+		canonicalSubscription.setIdElement(new IdDt("test"));
+		canonicalSubscription.setChannelType(CanonicalSubscriptionChannelType.RESTHOOK);
 		mySubscriptionRegistry.unregisterAllSubscriptions();
-		if (ourSubscribableChannel == null) {
-			ourSubscribableChannel = mySubscriptionChannelFactory.newDeliveryChannel("test", Subscription.SubscriptionChannelType.RESTHOOK.toCode().toLowerCase());
-			ourSubscribableChannel.subscribe(myStandaloneSubscriptionMessageHandler);
-		}
+		ourSubscribableChannel = mySubscriptionChannelFactory.newDeliveryChannel(mySubscriptionDeliveryChannelNamer.nameFromSubscription(canonicalSubscription));
+		ourSubscribableChannel.subscribe(myStandaloneSubscriptionMessageHandler);
 		myInterceptorRegistry.registerAnonymousInterceptor(Pointcut.SUBSCRIPTION_AFTER_PERSISTED_RESOURCE_CHECKED, mySubscriptionMatchingPost);
 		myInterceptorRegistry.registerAnonymousInterceptor(Pointcut.SUBSCRIPTION_AFTER_ACTIVE_SUBSCRIPTION_REGISTERED, mySubscriptionActivatedPost);
 	}
@@ -89,6 +102,7 @@ public abstract class BaseBlockingQueueSubscribableChannelDstu3Test extends Base
 		mySubscriptionMatchingPost.clear();
 		mySubscriptionActivatedPost.clear();
 		ourObservationListener.clear();
+		super.clearRegistry();
 	}
 
 	public <T extends IBaseResource> T sendResource(T theResource) throws InterruptedException {
@@ -98,6 +112,11 @@ public abstract class BaseBlockingQueueSubscribableChannelDstu3Test extends Base
 		ourSubscribableChannel.send(message);
 		mySubscriptionMatchingPost.awaitExpected();
 		return theResource;
+	}
+
+	protected void initSubscriptionLoader(List<Subscription> subscriptions, String uuid) throws InterruptedException {
+		myMockFhirClientSubscriptionProvider.setBundleProvider(new SimpleBundleProvider(new ArrayList<>(subscriptions), uuid));
+		mySubscriptionLoader.doSyncSubscriptionsForUnitTest();
 	}
 
 	protected Subscription sendSubscription(String theCriteria, String thePayload, String theEndpoint) throws InterruptedException {
@@ -126,14 +145,12 @@ public abstract class BaseBlockingQueueSubscribableChannelDstu3Test extends Base
 
 	@BeforeClass
 	public static void startListenerServer() throws Exception {
-		ourListenerPort = PortUtil.findFreePort();
 		ourListenerRestServer = new RestfulServer(FhirContext.forDstu3());
-		ourListenerServerBase = "http://localhost:" + ourListenerPort + "/fhir/context";
 
 		ourObservationListener = new ObservationListener();
 		ourListenerRestServer.setResourceProviders(ourObservationListener);
 
-		ourListenerServer = new Server(ourListenerPort);
+		ourListenerServer = new Server(0);
 
 		ServletContextHandler proxyHandler = new ServletContextHandler();
 		proxyHandler.setContextPath("/");
@@ -143,17 +160,22 @@ public abstract class BaseBlockingQueueSubscribableChannelDstu3Test extends Base
 		proxyHandler.addServlet(servletHolder, "/fhir/context/*");
 
 		ourListenerServer.setHandler(proxyHandler);
-		ourListenerServer.start();
+		JettyUtil.startServer(ourListenerServer);
+		ourListenerPort = JettyUtil.getPortForStartedServer(ourListenerServer);
+		ourListenerServerBase = "http://localhost:" + ourListenerPort + "/fhir/context";
+		FhirContext context = ourListenerRestServer.getFhirContext();
+		//Preload structure definitions so the load doesn't happen during the test (first load can be a little slow)
+		context.getValidationSupport().fetchAllStructureDefinitions(context);
 	}
 
 	@AfterClass
 	public static void stopListenerServer() throws Exception {
-		ourListenerServer.stop();
+		JettyUtil.closeServer(ourListenerServer);
 	}
 
 	public static class ObservationListener implements IResourceProvider, IPointcutLatch {
 
-		private PointcutLatch updateLatch = new PointcutLatch("Observation Update");
+		private final PointcutLatch updateLatch = new PointcutLatch("Observation Update");
 
 		@Create
 		public MethodOutcome create(@ResourceParam Observation theObservation, HttpServletRequest theRequest) {
