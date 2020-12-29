@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.model.entity;
  * #%L
  * HAPI FHIR Model
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,11 +25,22 @@ import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
-import javax.persistence.*;
+import javax.persistence.Column;
+import javax.persistence.Entity;
+import javax.persistence.FetchType;
+import javax.persistence.ForeignKey;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+import javax.persistence.JoinColumn;
+import javax.persistence.ManyToOne;
+import javax.persistence.SequenceGenerator;
+import javax.persistence.Table;
+import javax.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "HFJ_RES_TAG", uniqueConstraints= {
-		@UniqueConstraint(name="IDX_RESTAG_TAGID", columnNames= {"RES_ID","TAG_ID"})
+@Table(name = "HFJ_RES_TAG", uniqueConstraints = {
+	@UniqueConstraint(name = "IDX_RESTAG_TAGID", columnNames = {"RES_ID", "TAG_ID"})
 })
 public class ResourceTag extends BaseTag {
 
@@ -41,8 +52,8 @@ public class ResourceTag extends BaseTag {
 	@Column(name = "PID")
 	private Long myId;
 
-	@ManyToOne(cascade = {})
-	@JoinColumn(name = "RES_ID", referencedColumnName = "RES_ID", foreignKey=@ForeignKey(name="FK_RESTAG_RESOURCE"))
+	@ManyToOne(cascade = {}, fetch = FetchType.LAZY)
+	@JoinColumn(name = "RES_ID", referencedColumnName = "RES_ID", foreignKey = @ForeignKey(name = "FK_RESTAG_RESOURCE"))
 	private ResourceTable myResource;
 
 	@Column(name = "RES_TYPE", length = ResourceTable.RESTYPE_LEN, nullable = false)
@@ -50,6 +61,24 @@ public class ResourceTag extends BaseTag {
 
 	@Column(name = "RES_ID", insertable = false, updatable = false)
 	private Long myResourceId;
+
+	/**
+	 * Constructor
+	 */
+	public ResourceTag() {
+		super();
+	}
+
+	/**
+	 * Constructor
+	 */
+	public ResourceTag(ResourceTable theResourceTable, TagDefinition theTag, PartitionablePartitionId theRequestPartitionId) {
+		setTag(theTag);
+		setResource(theResourceTable);
+		setResourceId(theResourceTable.getId());
+		setResourceType(theResourceTable.getResourceType());
+		setPartitionId(theRequestPartitionId);
+	}
 
 	public Long getResourceId() {
 		return myResourceId;
@@ -59,26 +88,16 @@ public class ResourceTag extends BaseTag {
 		myResourceId = theResourceId;
 	}
 
-	public ResourceTag() {
-	}
-
-	public ResourceTag(ResourceTable theResourceTable, TagDefinition theTag) {
-		setTag(theTag);
-		setResource(theResourceTable);
-		setResourceId(theResourceTable.getId());
-		setResourceType(theResourceTable.getResourceType());
-	}
-
 	public ResourceTable getResource() {
 		return myResource;
 	}
 
-	public String getResourceType() {
-		return myResourceType;
-	}
-
 	public void setResource(ResourceTable theResource) {
 		myResource = theResource;
+	}
+
+	public String getResourceType() {
+		return myResourceType;
 	}
 
 	public void setResourceType(String theResourceType) {

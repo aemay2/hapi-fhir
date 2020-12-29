@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.provider;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,14 +27,23 @@ import org.hl7.fhir.instance.model.api.IBaseParameters;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IPrimitiveType;
 
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
+
 public abstract class BaseJpaSystemProviderDstu2Plus<T, MT> extends BaseJpaSystemProvider<T, MT> {
 
 
 	@Operation(name = MARK_ALL_RESOURCES_FOR_REINDEXING, idempotent = true, returnParameters = {
 		@OperationParam(name = "status")
 	})
-	public IBaseResource markAllResourcesForReindexing() {
-		getResourceReindexingSvc().markAllResourcesForReindexing();
+	public IBaseResource markAllResourcesForReindexing(
+		@OperationParam(name="type", min = 0, max = 1, typeName = "code") IPrimitiveType<String> theType
+	) {
+
+		if (theType != null && isNotBlank(theType.getValueAsString())) {
+			getResourceReindexingSvc().markAllResourcesForReindexing(theType.getValueAsString());
+		} else {
+			getResourceReindexingSvc().markAllResourcesForReindexing();
+		}
 
 		IBaseParameters retVal = ParametersUtil.newInstance(getContext());
 

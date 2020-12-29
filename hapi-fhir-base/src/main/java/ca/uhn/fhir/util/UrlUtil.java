@@ -10,22 +10,32 @@ import com.google.common.escape.Escaper;
 import com.google.common.net.PercentEscaper;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.utils.URLEncodedUtils;
+import org.apache.http.message.BasicNameValuePair;
 import org.hl7.fhir.instance.model.api.IPrimitiveType;
 
+import javax.annotation.Nonnull;
 import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLDecoder;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.StringTokenizer;
+import java.util.stream.Collectors;
 
-import static org.apache.commons.lang3.StringUtils.*;
+import static org.apache.commons.lang3.StringUtils.defaultIfBlank;
+import static org.apache.commons.lang3.StringUtils.defaultString;
+import static org.apache.commons.lang3.StringUtils.isBlank;
 
 /*
  * #%L
  * HAPI FHIR - Core Library
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -155,6 +165,18 @@ public class UrlUtil {
 		}
 		return PARAMETER_ESCAPER.escape(theUnescaped);
 	}
+
+	/**
+	 * Applies the same encodong as {@link #escapeUrlParam(String)} but against all
+	 * values in a collection
+	 */
+	public static List<String> escapeUrlParams(@Nonnull Collection<String> theUnescaped) {
+		return theUnescaped
+			.stream()
+			.map(t -> PARAMETER_ESCAPER.escape(t))
+			.collect(Collectors.toList());
+	}
+
 
 	public static boolean isAbsolute(String theValue) {
 		String value = theValue.toLowerCase();
@@ -316,7 +338,7 @@ public class UrlUtil {
 			}
 		}
 
-		if (url.matches("/[a-zA-Z]+\\?.*")) {
+		if (url.length() > 1 && url.charAt(0) == '/' && Character.isLetter(url.charAt(1)) && url.contains("?")) {
 			url = url.substring(1);
 		}
 		int nextStart = 0;
@@ -370,7 +392,7 @@ public class UrlUtil {
 	/**
 	 * This method specifically HTML-encodes the &quot; and
 	 * &lt; characters in order to prevent injection attacks.
-	 *
+	 * <p>
 	 * The following characters are escaped:
 	 * <ul>
 	 *    <li>&apos;</li>
@@ -379,7 +401,6 @@ public class UrlUtil {
 	 *    <li>&gt;</li>
 	 *    <li>\n (newline)</li>
 	 * </ul>
-	 *
 	 */
 	public static String sanitizeUrlPart(CharSequence theString) {
 		if (theString == null) {
@@ -432,6 +453,21 @@ public class UrlUtil {
 		return theString.toString();
 	}
 
+	/**
+	 * Applies the same logic as {@link #sanitizeUrlPart(CharSequence)} but against an array, returning an array with the
+	 * same strings as the input but with sanitization applied
+	 */
+	public static String[] sanitizeUrlPart(String[] theParameterValues) {
+		String[] retVal = null;
+		if (theParameterValues != null) {
+			retVal = new String[theParameterValues.length];
+			for (int i = 0; i < theParameterValues.length; i++) {
+				retVal[i] = sanitizeUrlPart(theParameterValues[i]);
+			}
+		}
+		return retVal;
+	}
+
 	private static Map<String, String[]> toQueryStringMap(HashMap<String, List<String>> map) {
 		HashMap<String, String[]> retVal = new HashMap<>();
 		for (Entry<String, List<String>> nextEntry : map.entrySet()) {
@@ -476,6 +512,18 @@ public class UrlUtil {
 		}
 
 		parameters = URLEncodedUtils.parse((matchUrl), Constants.CHARSET_UTF8, '&');
+
+		// One issue that has happened before is people putting a "+" sign into an email address in a match URL
+		// and having that turn into a " ". Since spaces are never appropriate for email addresses, let's just
+		// assume they really meant "+".
+		for (int i = 0; i < parameters.size(); i++) {
+			NameValuePair next = parameters.get(i);
+			if (next.getName().equals("email") && next.getValue().contains(" ")) {
+				BasicNameValuePair newPair = new BasicNameValuePair(next.getName(), next.getValue().replace(' ', '+'));
+				parameters.set(i, newPair);
+			}
+		}
+
 		return parameters;
 	}
 }

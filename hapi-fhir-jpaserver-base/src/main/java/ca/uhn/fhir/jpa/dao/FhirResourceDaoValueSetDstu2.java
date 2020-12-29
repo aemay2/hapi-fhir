@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.dao;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,12 @@ package ca.uhn.fhir.jpa.dao;
  */
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.context.support.IContextValidationSupport;
+import ca.uhn.fhir.context.support.DefaultProfileValidationSupport;
+import ca.uhn.fhir.context.support.IValidationSupport;
+import ca.uhn.fhir.context.support.IValidationSupport.CodeValidationResult;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoCodeSystem;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoValueSet;
+import ca.uhn.fhir.rest.api.server.storage.ResourcePersistentId;
 import ca.uhn.fhir.jpa.model.entity.BaseHasResource;
 import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
 import ca.uhn.fhir.model.dstu2.composite.CodeableConceptDt;
@@ -39,10 +44,8 @@ import ca.uhn.fhir.rest.param.TokenParam;
 import ca.uhn.fhir.rest.param.UriParam;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
-import org.apache.commons.codec.binary.StringUtils;
-import org.hl7.fhir.instance.hapi.validation.CachingValidationSupport;
-import org.hl7.fhir.instance.hapi.validation.DefaultProfileValidationSupport;
-import org.hl7.fhir.instance.hapi.validation.ValidationSupportChain;
+import org.hl7.fhir.common.hapi.validation.support.CachingValidationSupport;
+import org.hl7.fhir.common.hapi.validation.support.ValidationSupportChain;
 import org.hl7.fhir.instance.model.api.IIdType;
 import org.hl7.fhir.instance.model.api.IPrimitiveType;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,20 +57,25 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
+import static ca.uhn.fhir.jpa.dao.FhirResourceDaoValueSetDstu2.toStringOrNull;
+import static ca.uhn.fhir.jpa.dao.dstu3.FhirResourceDaoValueSetDstu3.vsValidateCodeOptions;
+import static ca.uhn.fhir.jpa.util.LogicUtil.multiXor;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
-public class FhirResourceDaoValueSetDstu2 extends FhirResourceDaoDstu2<ValueSet>
+public class FhirResourceDaoValueSetDstu2 extends BaseHapiFhirResourceDao<ValueSet>
 		implements IFhirResourceDaoValueSet<ValueSet, CodingDt, CodeableConceptDt>, IFhirResourceDaoCodeSystem<ValueSet, CodingDt, CodeableConceptDt> {
 
 	private DefaultProfileValidationSupport myDefaultProfileValidationSupport;
 
 	@Autowired
-	private IJpaValidationSupportDstu2 myJpaValidationSupport;
+	private IValidationSupport myJpaValidationSupport;
 
 	@Autowired
 	@Qualifier("myFhirContextDstu2Hl7Org")
 	private FhirContext myRiCtx;
+	@Autowired
+	private FhirContext myFhirContext;
 
 	private CachingValidationSupport myValidationSupport;
 
@@ -151,7 +159,7 @@ public class FhirResourceDaoValueSetDstu2 extends FhirResourceDaoDstu2<ValueSet>
 		}
 		ValueSet source;
 
-		org.hl7.fhir.dstu2.model.ValueSet defaultValueSet = myDefaultProfileValidationSupport.fetchResource(myRiCtx, org.hl7.fhir.dstu2.model.ValueSet.class, theUri);
+		ValueSet defaultValueSet = myDefaultProfileValidationSupport.fetchResource(ValueSet.class, theUri);
 		if (defaultValueSet != null) {
 			source = getContext().newJsonParser().parseResource(ValueSet.class, myRiCtx.newJsonParser().encodeResourceToString(defaultValueSet));
 		} else {
@@ -176,21 +184,22 @@ public class FhirResourceDaoValueSetDstu2 extends FhirResourceDaoDstu2<ValueSet>
 	@Override
 	public List<IIdType> findCodeSystemIdsContainingSystemAndCode(String theCode, String theSystem, RequestDetails theRequest) {
 		if (theSystem != null && theSystem.startsWith("http://hl7.org/fhir/")) {
-			return Collections.singletonList((IIdType) new IdDt(theSystem));
+			return Collections.singletonList(new IdDt(theSystem));
 		}
 
 		List<IIdType> valueSetIds;
-		Set<Long> ids = searchForIds(new SearchParameterMap(ValueSet.SP_CODE, new TokenParam(theSystem, theCode)), theRequest);
-		valueSetIds = new ArrayList<IIdType>();
-		for (Long next : ids) {
-			valueSetIds.add(new IdDt("ValueSet", next));
+		Set<ResourcePersistentId> ids = searchForIds(new SearchParameterMap(ValueSet.SP_CODE, new TokenParam(theSystem, theCode)), theRequest);
+		valueSetIds = new ArrayList<>();
+		for (ResourcePersistentId next : ids) {
+			IIdType id = myIdHelperService.translatePidIdToForcedId(myFhirContext, "ValueSet", next);
+			valueSetIds.add(id);
 		}
 		return valueSetIds;
 	}
 
 	private ValueSet loadValueSetForExpansion(IIdType theId, RequestDetails theRequest) {
 		if (theId.getValue().startsWith("http://hl7.org/fhir/")) {
-			org.hl7.fhir.dstu2.model.ValueSet valueSet = myValidationSupport.fetchResource(myRiCtx, org.hl7.fhir.dstu2.model.ValueSet.class, theId.getValue());
+			org.hl7.fhir.dstu2.model.ValueSet valueSet = myValidationSupport.fetchResource(org.hl7.fhir.dstu2.model.ValueSet.class, theId.getValue());
 			if (valueSet != null) {
 				return getContext().newJsonParser().parseResource(ValueSet.class, myRiCtx.newJsonParser().encodeResourceToString(valueSet));
 			}
@@ -203,13 +212,13 @@ public class FhirResourceDaoValueSetDstu2 extends FhirResourceDaoDstu2<ValueSet>
 		return source;
 	}
 
-	private IContextValidationSupport.LookupCodeResult lookup(List<ExpansionContains> theContains, String theSystem, String theCode) {
+	private IValidationSupport.LookupCodeResult lookup(List<ExpansionContains> theContains, String theSystem, String theCode) {
 		for (ExpansionContains nextCode : theContains) {
 
 			String system = nextCode.getSystem();
 			String code = nextCode.getCode();
 			if (theSystem.equals(system) && theCode.equals(code)) {
-				IContextValidationSupport.LookupCodeResult retVal = new IContextValidationSupport.LookupCodeResult();
+				IValidationSupport.LookupCodeResult retVal = new IValidationSupport.LookupCodeResult();
 				retVal.setSearchedForCode(code);
 				retVal.setSearchedForSystem(system);
 				retVal.setFound(true);
@@ -228,7 +237,7 @@ public class FhirResourceDaoValueSetDstu2 extends FhirResourceDaoDstu2<ValueSet>
 	}
 
 	@Override
-	public IContextValidationSupport.LookupCodeResult lookupCode(IPrimitiveType<String> theCode, IPrimitiveType<String> theSystem, CodingDt theCoding, RequestDetails theRequest) {
+	public IValidationSupport.LookupCodeResult lookupCode(IPrimitiveType<String> theCode, IPrimitiveType<String> theSystem, CodingDt theCoding, RequestDetails theRequest) {
 		boolean haveCoding = theCoding != null && isNotBlank(theCoding.getSystem()) && isNotBlank(theCoding.getCode());
 		boolean haveCode = theCode != null && theCode.isEmpty() == false;
 		boolean haveSystem = theSystem != null && theSystem.isEmpty() == false;
@@ -254,13 +263,13 @@ public class FhirResourceDaoValueSetDstu2 extends FhirResourceDaoDstu2<ValueSet>
 		for (IIdType nextId : valueSetIds) {
 			ValueSet expansion = expand(nextId, null, theRequest);
 			List<ExpansionContains> contains = expansion.getExpansion().getContains();
-			IContextValidationSupport.LookupCodeResult result = lookup(contains, system, code);
+			IValidationSupport.LookupCodeResult result = lookup(contains, system, code);
 			if (result != null) {
 				return result;
 			}
 		}
 
-		IContextValidationSupport.LookupCodeResult retVal = new IContextValidationSupport.LookupCodeResult();
+		IValidationSupport.LookupCodeResult retVal = new IValidationSupport.LookupCodeResult();
 		retVal.setFound(false);
 		retVal.setSearchedForCode(code);
 		retVal.setSearchedForSystem(system);
@@ -276,7 +285,7 @@ public class FhirResourceDaoValueSetDstu2 extends FhirResourceDaoDstu2<ValueSet>
 	@PostConstruct
 	public void postConstruct() {
 		super.postConstruct();
-		myDefaultProfileValidationSupport = new DefaultProfileValidationSupport();
+		myDefaultProfileValidationSupport = new DefaultProfileValidationSupport(myFhirContext);
 		myValidationSupport = new CachingValidationSupport(new ValidationSupportChain(myDefaultProfileValidationSupport, myJpaValidationSupport));
 	}
 
@@ -285,101 +294,20 @@ public class FhirResourceDaoValueSetDstu2 extends FhirResourceDaoDstu2<ValueSet>
 		// nothing
 	}
 
-	private String toStringOrNull(IPrimitiveType<String> thePrimitive) {
+	public static String toStringOrNull(IPrimitiveType<String> thePrimitive) {
 		return thePrimitive != null ? thePrimitive.getValue() : null;
 	}
 
 	@Override
-	public ca.uhn.fhir.jpa.dao.IFhirResourceDaoValueSet.ValidateCodeResult validateCode(IPrimitiveType<String> theValueSetIdentifier, IIdType theId, IPrimitiveType<String> theCode,
+	public IValidationSupport.CodeValidationResult validateCode(IPrimitiveType<String> theValueSetIdentifier, IIdType theId, IPrimitiveType<String> theCode,
 			IPrimitiveType<String> theSystem, IPrimitiveType<String> theDisplay, CodingDt theCoding, CodeableConceptDt theCodeableConcept, RequestDetails theRequest) {
-		List<IIdType> valueSetIds;
-
-		boolean haveCodeableConcept = theCodeableConcept != null && theCodeableConcept.getCoding().size() > 0;
-		boolean haveCoding = theCoding != null && theCoding.isEmpty() == false;
-		boolean haveCode = theCode != null && theCode.isEmpty() == false;
-
-		if (!haveCodeableConcept && !haveCoding && !haveCode) {
-			throw new InvalidRequestException("No code, coding, or codeableConcept provided to validate");
-		}
-		if (!multiXor(haveCodeableConcept, haveCoding, haveCode)) {
-			throw new InvalidRequestException("$validate-code can only validate (system AND code) OR (coding) OR (codeableConcept)");
-		}
-
-		boolean haveIdentifierParam = theValueSetIdentifier != null && theValueSetIdentifier.isEmpty() == false;
-		if (theId != null) {
-			valueSetIds = Collections.singletonList(theId);
-		} else if (haveIdentifierParam) {
-			Set<Long> ids = searchForIds(new SearchParameterMap(ValueSet.SP_IDENTIFIER, new TokenParam(null, theValueSetIdentifier.getValue())), theRequest);
-			valueSetIds = new ArrayList<>();
-			for (Long next : ids) {
-				valueSetIds.add(new IdDt("ValueSet", next));
-			}
-		} else {
-			if (theCode == null || theCode.isEmpty()) {
-				throw new InvalidRequestException("Either ValueSet ID or ValueSet identifier or system and code must be provided. Unable to validate.");
-			}
-			String code = theCode.getValue();
-			String system = toStringOrNull(theSystem);
-			valueSetIds = findCodeSystemIdsContainingSystemAndCode(code, system, theRequest);
-		}
-
-		for (IIdType nextId : valueSetIds) {
-			ValueSet expansion = expand(nextId, null, theRequest);
-			List<ExpansionContains> contains = expansion.getExpansion().getContains();
-			ValidateCodeResult result = validateCodeIsInContains(contains, toStringOrNull(theSystem), toStringOrNull(theCode), theCoding, theCodeableConcept);
-			if (result != null) {
-				if (theDisplay != null && isNotBlank(theDisplay.getValue()) && isNotBlank(result.getDisplay())) {
-					if (!theDisplay.getValue().equals(result.getDisplay())) {
-						return new ValidateCodeResult(false, "Display for code does not match", result.getDisplay());
-					}
-				}
-				return result;
-			}
-		}
-
-		return new ValidateCodeResult(false, "Code not found", null);
+		return myTerminologySvc.validateCode(vsValidateCodeOptions(), theId, toStringOrNull(theValueSetIdentifier), toStringOrNull(theSystem), toStringOrNull(theCode), toStringOrNull(theDisplay), theCoding, theCodeableConcept);
 	}
 
-	private ca.uhn.fhir.jpa.dao.IFhirResourceDaoValueSet.ValidateCodeResult validateCodeIsInContains(List<ExpansionContains> contains, String theSystem, String theCode, CodingDt theCoding,
-			CodeableConceptDt theCodeableConcept) {
-		for (ExpansionContains nextCode : contains) {
-			ca.uhn.fhir.jpa.dao.IFhirResourceDaoValueSet.ValidateCodeResult result = validateCodeIsInContains(nextCode.getContains(), theSystem, theCode, theCoding, theCodeableConcept);
-			if (result != null) {
-				return result;
-			}
-
-			String system = nextCode.getSystem();
-			String code = nextCode.getCode();
-
-			if (isNotBlank(theCode)) {
-				if (theCode.equals(code) && (isBlank(theSystem) || theSystem.equals(system))) {
-					return new ValidateCodeResult(true, "Validation succeeded", nextCode.getDisplay());
-				}
-			} else if (theCoding != null) {
-				if (StringUtils.equals(system, theCoding.getSystem()) && StringUtils.equals(code, theCoding.getCode())) {
-					return new ValidateCodeResult(true, "Validation succeeded", nextCode.getDisplay());
-				}
-			} else {
-				for (CodingDt next : theCodeableConcept.getCoding()) {
-					if (StringUtils.equals(system, next.getSystem()) && StringUtils.equals(code, next.getCode())) {
-						return new ValidateCodeResult(true, "Validation succeeded", nextCode.getDisplay());
-					}
-				}
-			}
-
-		}
-
-		return null;
-	}
-
-	private static boolean multiXor(boolean... theValues) {
-		int count = 0;
-		for (int i = 0; i < theValues.length; i++) {
-			if (theValues[i]) {
-				count++;
-			}
-		}
-		return count == 1;
+	@Override
+	public CodeValidationResult validateCode(IIdType theCodeSystemId, IPrimitiveType<String> theCodeSystemUrl, IPrimitiveType<String> theVersion, IPrimitiveType<String> theCode, 
+			IPrimitiveType<String> theDisplay, CodingDt theCoding, CodeableConceptDt theCodeableConcept, RequestDetails theRequestDetails) {
+		throw new UnsupportedOperationException();
 	}
 
 }

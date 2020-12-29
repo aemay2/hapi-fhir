@@ -4,7 +4,7 @@ package ca.uhn.fhir.rest.server.method;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,8 @@ import ca.uhn.fhir.parser.DataFormatException;
 import ca.uhn.fhir.rest.annotation.IdParam;
 import ca.uhn.fhir.rest.annotation.Operation;
 import ca.uhn.fhir.rest.annotation.OperationParam;
+import ca.uhn.fhir.rest.annotation.OptionalParam;
+import ca.uhn.fhir.rest.annotation.RequiredParam;
 import ca.uhn.fhir.rest.api.RequestTypeEnum;
 import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
@@ -91,6 +93,14 @@ public class OperationMethodBinding extends BaseResourceReturningMethodBinding {
 			myDescription = null;
 		}
 
+		for (Annotation[] nextParamAnnotations : theMethod.getParameterAnnotations()) {
+			for (Annotation nextParam : nextParamAnnotations) {
+				if (nextParam instanceof OptionalParam || nextParam instanceof RequiredParam) {
+					throw new ConfigurationException("Illegal method parameter annotation @" + nextParam.annotationType().getSimpleName() + " on method: " + theMethod.toString());
+				}
+			}
+		}
+
 		if (isBlank(theOperationName)) {
 			throw new ConfigurationException("Method '" + theMethod.getName() + "' on type " + theMethod.getDeclaringClass().getName() + " is annotated with @" + Operation.class.getSimpleName()
 				+ " but this annotation has no name defined");
@@ -102,11 +112,11 @@ public class OperationMethodBinding extends BaseResourceReturningMethodBinding {
 
 		try {
 			if (theReturnTypeFromRp != null) {
-				setResourceName(theContext.getResourceDefinition(theReturnTypeFromRp).getName());
+				setResourceName(theContext.getResourceType(theReturnTypeFromRp));
 			} else if (Modifier.isAbstract(theOperationType.getModifiers()) == false) {
-				setResourceName(theContext.getResourceDefinition(theOperationType).getName());
+				setResourceName(theContext.getResourceType(theOperationType));
 			} else if (isNotBlank(theOperationTypeName)) {
-				setResourceName(theContext.getResourceDefinition(theOperationTypeName).getName());
+				setResourceName(theContext.getResourceType(theOperationTypeName));
 			} else {
 				setResourceName(null);
 			}
@@ -216,43 +226,43 @@ public class OperationMethodBinding extends BaseResourceReturningMethodBinding {
 	}
 
 	@Override
-	public boolean incomingServerRequestMatchesMethod(RequestDetails theRequest) {
+	public MethodMatchEnum incomingServerRequestMatchesMethod(RequestDetails theRequest) {
 		if (isBlank(theRequest.getOperation())) {
-			return false;
+			return MethodMatchEnum.NONE;
 		}
 
 		if (!myName.equals(theRequest.getOperation())) {
 			if (!myName.equals(WILDCARD_NAME)) {
-				return false;
+				return MethodMatchEnum.NONE;
 			}
 		}
 
 		if (getResourceName() == null) {
 			if (isNotBlank(theRequest.getResourceName())) {
 				if (!isGlobalMethod()) {
-					return false;
+					return MethodMatchEnum.NONE;
 				}
 			}
 		}
 
 		if (getResourceName() != null && !getResourceName().equals(theRequest.getResourceName())) {
-			return false;
+			return MethodMatchEnum.NONE;
 		}
 
 		RequestTypeEnum requestType = theRequest.getRequestType();
 		if (requestType != RequestTypeEnum.GET && requestType != RequestTypeEnum.POST) {
 			// Operations can only be invoked with GET and POST
-			return false;
+			return MethodMatchEnum.NONE;
 		}
 
 		boolean requestHasId = theRequest.getId() != null;
 		if (requestHasId) {
-			return myCanOperateAtInstanceLevel;
+			return myCanOperateAtInstanceLevel ? MethodMatchEnum.EXACT : MethodMatchEnum.NONE;
 		}
 		if (isNotBlank(theRequest.getResourceName())) {
-			return myCanOperateAtTypeLevel;
+			return myCanOperateAtTypeLevel ? MethodMatchEnum.EXACT : MethodMatchEnum.NONE;
 		}
-		return myCanOperateAtServerLevel;
+		return myCanOperateAtServerLevel ? MethodMatchEnum.EXACT : MethodMatchEnum.NONE;
 	}
 
 	@Override

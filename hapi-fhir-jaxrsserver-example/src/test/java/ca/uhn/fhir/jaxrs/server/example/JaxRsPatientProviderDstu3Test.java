@@ -1,6 +1,6 @@
 package ca.uhn.fhir.jaxrs.server.example;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.Arrays;
 import java.util.List;
@@ -12,7 +12,7 @@ import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.hl7.fhir.dstu3.model.*;
 import org.hl7.fhir.dstu3.model.Bundle.BundleEntryComponent;
-import org.junit.*;
+import org.junit.jupiter.api.*; import static org.hamcrest.MatcherAssert.assertThat;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.jaxrs.client.JaxRsRestfulClientFactory;
@@ -31,13 +31,13 @@ public class JaxRsPatientProviderDstu3Test {
 	private static int ourPort;
 	private static Server jettyServer;
 
-	@AfterClass
+	@AfterAll
 	public static void afterClassClearContext() throws Exception {
         JettyUtil.closeServer(jettyServer);
 		TestUtil.clearAllStaticFieldsForUnitTest();
 	}
 
-	@BeforeClass
+	@BeforeAll
 	public static void setUpClass()
 			throws Exception {
 		ServletContextHandler context = new ServletContextHandler(ServletContextHandler.SESSIONS);
@@ -124,7 +124,7 @@ public class JaxRsPatientProviderDstu3Test {
     
     /** Search - Subsetting (_summary and _elements) */
     @Test
-    @Ignore
+    @Disabled
     public void testSummary() {
     client.search()
             .forResource(Patient.class)
@@ -199,29 +199,10 @@ public class JaxRsPatientProviderDstu3Test {
             //assertEquals(e.getStatusCode(), Constants.STATUS_HTTP_404_NOT_FOUND);
         }
     }
-    
-    /** Transaction - Server */
-    @Ignore
-    @Test
-    public void testTransaction() {
-        Bundle bundle = new Bundle();
-        BundleEntryComponent entry = bundle.addEntry();
-        final Patient existing = new Patient();
-        existing.getName().get(0).setFamily("Created with bundle");
-        entry.setResource(existing);
 
-        // FIXME ?
-//        BoundCodeDt<BundleEntryTransactionMethodEnum> theTransactionOperation = 
-//                new BoundCodeDt(
-//                        BundleEntryTransactionMethodEnum.VALUESET_BINDER, 
-//                        BundleEntryTransactionMethodEnum.POST);
-//        entry.setTransactionMethod(theTransactionOperation);
-        Bundle response = client.transaction().withBundle(bundle).execute();
-    }
-    
     /** Conformance - Server */
     @Test
-    @Ignore
+    @Disabled
     public void testConformance() {
         final CapabilityStatement conf = client.fetchConformance().ofType(CapabilityStatement.class).execute();
         System.out.println(conf.getRest().get(0).getResource().get(0).getType());
@@ -250,7 +231,7 @@ public class JaxRsPatientProviderDstu3Test {
            .execute();
         String resultValue = outParams.getParameter().get(0).getValue().toString();
         System.out.println(resultValue);
-        assertEquals("expected but found : "+ resultValue, resultValue.contains("myAwesomeDummyValue"), true);
+        assertEquals(resultValue.contains("myAwesomeDummyValue"), true, "expected but found : "+ resultValue);
     }
     
     @Test
@@ -271,7 +252,7 @@ public class JaxRsPatientProviderDstu3Test {
                 .execute();
         String resultValue = outParams.getParameter().get(0).getValue().toString();
         System.out.println(resultValue);
-        assertEquals("expected but found : "+ resultValue, resultValue.contains("myAwesomeDummyValue"), true);
+        assertEquals(resultValue.contains("myAwesomeDummyValue"), true, "expected but found : "+ resultValue);
     }
     
     @Test

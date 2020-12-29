@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.term.loinc;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,13 +36,9 @@ import static org.apache.commons.lang3.StringUtils.trim;
 public class LoincAnswerListLinkHandler implements IRecordHandler {
 
 	private final Map<String, TermConcept> myCode2Concept;
-	private final Map<String, ValueSet> myIdToValueSet = new HashMap<>();
 
-	public LoincAnswerListLinkHandler(Map<String, TermConcept> theCode2concept, List<ValueSet> theValueSets) {
+	public LoincAnswerListLinkHandler(Map<String, TermConcept> theCode2concept) {
 		myCode2Concept = theCode2concept;
-		for (ValueSet next : theValueSets) {
-			myIdToValueSet.put(next.getId(), next);
-		}
 	}
 
 	@Override

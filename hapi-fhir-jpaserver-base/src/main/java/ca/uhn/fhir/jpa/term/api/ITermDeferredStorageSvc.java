@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.term.api;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,10 @@ package ca.uhn.fhir.jpa.term.api;
  * #L%
  */
 
+import ca.uhn.fhir.jpa.entity.TermCodeSystem;
 import ca.uhn.fhir.jpa.entity.TermConcept;
 import ca.uhn.fhir.jpa.entity.TermConceptParentChildLink;
+import ca.uhn.fhir.jpa.model.entity.ResourceTable;
 import org.hl7.fhir.r4.model.ConceptMap;
 import org.hl7.fhir.r4.model.ValueSet;
 
@@ -50,4 +52,15 @@ public interface ITermDeferredStorageSvc {
 	void addConceptMapsToStorageQueue(List<ConceptMap> theConceptMaps);
 
 	void addValueSetsToStorageQueue(List<ValueSet> theValueSets);
+
+	void deleteCodeSystem(TermCodeSystem theCodeSystem);
+
+	void deleteCodeSystemForResource(ResourceTable theCodeSystemResourceToDelete);
+
+	/**
+	 * This is mostly here for unit tests - Saves any and all deferred concepts and links
+	 */
+	void saveAllDeferred();
+
+	void logQueueForUnitTest();
 }

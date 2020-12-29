@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>ca.uhn.hapi.fhir</groupId>
 		<artifactId>hapi-deployable-pom</artifactId>
-		<version>4.1.0-SNAPSHOT</version>
+		<version>5.3.0-SNAPSHOT</version>
 		<relativePath>../hapi-deployable-pom/pom.xml</relativePath>
 	</parent>
 
@@ -34,11 +34,11 @@
 		<!--
 		Test dependencies on other optional parts of HAPI 
 		-->
-      <dependency>
-         <groupId>org.codehaus.woodstox</groupId>
-         <artifactId>woodstox-core-asl</artifactId>
-         <scope>test</scope>
-      </dependency>
+		<dependency>
+			<groupId>com.fasterxml.woodstox</groupId>
+			<artifactId>woodstox-core</artifactId>
+			<scope>test</scope>
+		</dependency>
 		<dependency>
 			<groupId>ca.uhn.hapi.fhir</groupId>
 			<artifactId>hapi-fhir-validation-resources-dstu2</artifactId>
@@ -72,6 +72,32 @@
 		<dependency>
 			<groupId>net.sf.saxon</groupId>
 			<artifactId>Saxon-HE</artifactId>
+			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<groupId>xpp3</groupId>
+			<artifactId>xpp3</artifactId>
+			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<groupId>org.fhir</groupId>
+			<artifactId>ucum</artifactId>
+			<optional>true</optional>
+			<exclusions>
+				<exclusion>
+					<groupId>junit</groupId>
+					<artifactId>junit</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<!--
+		Gson is needed for some utility classes in org.hl7.fhir.dstu2, so
+		this is necessary for the JavaDocs to build
+		-->
+		<dependency>
+			<groupId>com.google.code.gson</groupId>
+			<artifactId>gson</artifactId>
 			<optional>true</optional>
 		</dependency>
 
@@ -269,7 +295,7 @@
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<configuration>
-					<argLine>@{argLine} -Dfile.encoding=UTF-8 -Xmx712m</argLine>
+					<argLine>@{argLine} ${surefire_jvm_args}</argLine>
 				</configuration>
 			</plugin>
 			<plugin>
@@ -293,14 +319,28 @@
 				<extensions>true</extensions>
 				<configuration>
 					<instructions>
+                        <_nouses>true</_nouses>
+                        <_removeheaders>Built-By, Include-Resource, Private-Package, Require-Capability</_removeheaders>
+                        <!-- No need to disable normal OSGi class loading
 						<Fragment-Host>
 							ca.uhn.hapi.fhir.hapi-fhir-base
 						</Fragment-Host>
+						-->
 						<Import-Package>
 							javax.servlet*;resolution:=optional,
 							*
 						</Import-Package>
 					</instructions>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<configuration>
+					<includeDependencySources>true</includeDependencySources>
+					<dependencySourceIncludes>
+						<include>ca.uhn.hapi.fhir:org.hl7.fhir.dstu2</include>
+					</dependencySourceIncludes>
 				</configuration>
 			</plugin>
 		</plugins>

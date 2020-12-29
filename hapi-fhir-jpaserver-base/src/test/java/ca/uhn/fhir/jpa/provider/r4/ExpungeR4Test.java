@@ -1,26 +1,31 @@
 package ca.uhn.fhir.jpa.provider.r4;
 
-import ca.uhn.fhir.jpa.dao.DaoConfig;
-import ca.uhn.fhir.jpa.dao.IFhirResourceDao;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDao;
+import ca.uhn.fhir.jpa.api.model.ExpungeOptions;
 import ca.uhn.fhir.jpa.dao.data.ISearchDao;
 import ca.uhn.fhir.jpa.dao.data.ISearchResultDao;
 import ca.uhn.fhir.jpa.search.PersistedJpaSearchFirstPageBundleProvider;
 import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
-import ca.uhn.fhir.jpa.util.ExpungeOptions;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
+import ca.uhn.fhir.rest.param.ReferenceParam;
+import ca.uhn.fhir.rest.param.TokenParam;
 import ca.uhn.fhir.rest.server.exceptions.PreconditionFailedException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceGoneException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
-import ca.uhn.fhir.util.TestUtil;
+import ca.uhn.fhir.util.HapiExtensions;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
+import org.hl7.fhir.r4.model.BooleanType;
+import org.hl7.fhir.r4.model.DateType;
+import org.hl7.fhir.r4.model.Enumerations;
 import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.Observation;
 import org.hl7.fhir.r4.model.Patient;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.Test;
+import org.hl7.fhir.r4.model.SearchParameter;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,9 +33,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import java.util.List;
 
 import static org.awaitility.Awaitility.await;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.not;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class ExpungeR4Test extends BaseResourceProviderR4Test {
 
@@ -46,12 +54,12 @@ public class ExpungeR4Test extends BaseResourceProviderR4Test {
 	@Autowired
 	private ISearchResultDao mySearchResultDao;
 
-	@After
+	@AfterEach
 	public void afterDisableExpunge() {
 		myDaoConfig.setExpungeEnabled(new DaoConfig().isExpungeEnabled());
 	}
 
-	@Before
+	@BeforeEach
 	public void beforeEnableExpunge() {
 		myDaoConfig.setExpungeEnabled(true);
 	}
@@ -79,12 +87,37 @@ public class ExpungeR4Test extends BaseResourceProviderR4Test {
 	}
 
 	public void createStandardPatients() {
+		SearchParameter sp = new SearchParameter();
+		sp.setId("SearchParameter/patient-birthdate");
+		sp.setType(Enumerations.SearchParamType.DATE);
+		sp.setCode("birthdate");
+		sp.setExpression("Patient.birthDate");
+		sp.setStatus(Enumerations.PublicationStatus.ACTIVE);
+		sp.addBase("Patient");
+		mySearchParameterDao.update(sp);
+
+		sp = new SearchParameter();
+		sp.setId("SearchParameter/patient-birthdate-unique");
+		sp.setType(Enumerations.SearchParamType.COMPOSITE);
+		sp.setStatus(Enumerations.PublicationStatus.ACTIVE);
+		sp.addBase("Patient");
+		sp.addComponent()
+			.setExpression("Patient")
+			.setDefinition("SearchParameter/patient-birthdate");
+		sp.addExtension()
+			.setUrl(HapiExtensions.EXT_SP_UNIQUE)
+			.setValue(new BooleanType(true));
+		mySearchParameterDao.update(sp);
+
+		mySearchParamRegistry.forceRefresh();
+
 		Patient p = new Patient();
 		p.setId("PT-ONEVERSION");
 		p.getMeta().addTag().setSystem("http://foo").setCode("bar");
 		p.getMeta().setSource("http://foo_source");
 		p.setActive(true);
 		p.addIdentifier().setSystem("foo").setValue("bar");
+		p.setBirthDateElement(new DateType("2020-01"));
 		p.addName().setFamily("FAM");
 		myOneVersionPatientId = myPatientDao.update(p).getId();
 
@@ -174,10 +207,42 @@ public class ExpungeR4Test extends BaseResourceProviderR4Test {
 		// Create then delete
 		Patient p = new Patient();
 		p.setId("TEST");
+		p.setActive(true);
+		p.addName().setFamily("FOO");
+		myPatientDao.update(p);
+
+		p.setActive(false);
+		myPatientDao.update(p);
+
+		myPatientDao.delete(new IdType("Patient/TEST"));
+
+		runInTransaction(() -> assertThat(myResourceTableDao.findAll(), not(empty())));
+		runInTransaction(() -> assertThat(myResourceHistoryTableDao.findAll(), not(empty())));
+		runInTransaction(() -> assertThat(myForcedIdDao.findAll(), not(empty())));
+
+		myPatientDao.expunge(new ExpungeOptions()
+			.setExpungeDeletedResources(true)
+			.setExpungeOldVersions(true), null);
+
+		runInTransaction(() -> assertThat(myResourceTableDao.findAll(), empty()));
+		runInTransaction(() -> assertThat(myResourceHistoryTableDao.findAll(), empty()));
+		runInTransaction(() -> assertThat(myForcedIdDao.findAll(), empty()));
+
+	}
+
+	@Test
+	public void testExpungeAllVersionsWithTagsDeletesRow() {
+		// Create then delete
+		Patient p = new Patient();
+		p.setId("TEST");
 		p.getMeta().addTag().setSystem("http://foo").setCode("bar");
 		p.setActive(true);
 		p.addName().setFamily("FOO");
 		myPatientDao.update(p).getId();
+
+		p.setActive(false);
+		myPatientDao.update(p);
+
 		myPatientDao.delete(new IdType("Patient/TEST"));
 
 		runInTransaction(() -> assertThat(myResourceTableDao.findAll(), not(empty())));
@@ -347,16 +412,16 @@ public class ExpungeR4Test extends BaseResourceProviderR4Test {
 	public void testExpungeEverythingWhereResourceInSearchResults() {
 		createStandardPatients();
 
-		await().until(()-> runInTransaction(() -> mySearchEntityDao.count() == 0));
-		await().until(()-> runInTransaction(() -> mySearchResultDao.count() == 0));
+		await().until(() -> runInTransaction(() -> mySearchEntityDao.count() == 0));
+		await().until(() -> runInTransaction(() -> mySearchResultDao.count() == 0));
 
 		PersistedJpaSearchFirstPageBundleProvider search = (PersistedJpaSearchFirstPageBundleProvider) myPatientDao.search(new SearchParameterMap());
 		assertEquals(PersistedJpaSearchFirstPageBundleProvider.class, search.getClass());
 		assertEquals(2, search.size().intValue());
 		assertEquals(2, search.getResources(0, 2).size());
 
-		await().until(()-> runInTransaction(() -> mySearchEntityDao.count() == 1));
-		await().until(()-> runInTransaction(() -> mySearchResultDao.count() == 2));
+		await().until(() -> runInTransaction(() -> mySearchEntityDao.count() == 1));
+		await().until(() -> runInTransaction(() -> mySearchResultDao.count() == 2));
 
 		mySystemDao.expunge(new ExpungeOptions()
 			.setExpungeEverything(true), null);
@@ -401,9 +466,88 @@ public class ExpungeR4Test extends BaseResourceProviderR4Test {
 
 	}
 
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
+
+	@Test
+	public void testExpungeForcedIdAndThenReuseIt() {
+		// Create with forced ID, and an Observation that links to it
+		Patient p = new Patient();
+		p.setId("TEST");
+		p.setActive(true);
+		p.addName().setFamily("FOO");
+		myPatientDao.update(p);
+
+		Observation obs = new Observation();
+		obs.setId("OBS");
+		obs.getSubject().setReference("Patient/TEST");
+		myObservationDao.update(obs);
+
+		// Make sure read works
+		p = myPatientDao.read(new IdType("Patient/TEST"));
+		assertTrue(p.getActive());
+
+		// Make sure search by ID works
+		IBundleProvider outcome = myPatientDao.search(SearchParameterMap.newSynchronous("_id", new TokenParam("Patient/TEST")));
+		p = (Patient) outcome.getResources(0, 1).get(0);
+		assertTrue(p.getActive());
+
+		// Make sure search by Reference works
+		outcome = myObservationDao.search(SearchParameterMap.newSynchronous(Observation.SP_SUBJECT, new ReferenceParam("Patient/TEST")));
+		obs = (Observation) outcome.getResources(0, 1).get(0);
+		assertEquals("OBS", obs.getIdElement().getIdPart());
+
+		// Delete and expunge
+		myObservationDao.delete(new IdType("Observation/OBS"));
+		myPatientDao.delete(new IdType("Patient/TEST"));
+		myPatientDao.expunge(new ExpungeOptions()
+			.setExpungeDeletedResources(true)
+			.setExpungeOldVersions(true), null);
+		myObservationDao.expunge(new ExpungeOptions()
+			.setExpungeDeletedResources(true)
+			.setExpungeOldVersions(true), null);
+		runInTransaction(() -> assertThat(myResourceTableDao.findAll(), empty()));
+		runInTransaction(() -> assertThat(myResourceHistoryTableDao.findAll(), empty()));
+		runInTransaction(() -> assertThat(myForcedIdDao.findAll(), empty()));
+
+		// Create again with the same forced ID
+		p = new Patient();
+		p.setId("TEST");
+		p.setActive(true);
+		p.addName().setFamily("FOO");
+		myPatientDao.update(p);
+
+		obs = new Observation();
+		obs.setId("OBS");
+		obs.getSubject().setReference("Patient/TEST");
+		myObservationDao.update(obs);
+
+		// Make sure read works
+		p = myPatientDao.read(new IdType("Patient/TEST"));
+		assertTrue(p.getActive());
+
+		// Make sure search works
+		outcome = myPatientDao.search(SearchParameterMap.newSynchronous("_id", new TokenParam("Patient/TEST")));
+		p = (Patient) outcome.getResources(0, 1).get(0);
+		assertTrue(p.getActive());
+
+		// Make sure search by Reference works
+		outcome = myObservationDao.search(SearchParameterMap.newSynchronous(Observation.SP_SUBJECT, new ReferenceParam("Patient/TEST")));
+		obs = (Observation) outcome.getResources(0, 1).get(0);
+		assertEquals("OBS", obs.getIdElement().getIdPart());
+
+		// Delete and expunge
+		myObservationDao.delete(new IdType("Observation/OBS"));
+		myPatientDao.delete(new IdType("Patient/TEST"));
+		myPatientDao.expunge(new ExpungeOptions()
+			.setExpungeDeletedResources(true)
+			.setExpungeOldVersions(true), null);
+		myObservationDao.expunge(new ExpungeOptions()
+			.setExpungeDeletedResources(true)
+			.setExpungeOldVersions(true), null);
+		runInTransaction(() -> assertThat(myResourceTableDao.findAll(), empty()));
+		runInTransaction(() -> assertThat(myResourceHistoryTableDao.findAll(), empty()));
+		runInTransaction(() -> assertThat(myForcedIdDao.findAll(), empty()));
+
 	}
+
 
 }

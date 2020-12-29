@@ -1,12 +1,16 @@
 package ca.uhn.fhir.jpa.dao.dstu3;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoSearchParameter;
-import ca.uhn.fhir.jpa.dao.IFhirSystemDao;
-import ca.uhn.fhir.jpa.searchparam.registry.ISearchParamRegistry;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoSearchParameter;
+import ca.uhn.fhir.jpa.dao.BaseHapiFhirResourceDao;
 import ca.uhn.fhir.jpa.dao.r4.FhirResourceDaoSearchParameterR4;
 import ca.uhn.fhir.jpa.model.entity.ResourceTable;
-import org.hl7.fhir.dstu3.model.*;
+import ca.uhn.fhir.jpa.searchparam.extractor.ISearchParamExtractor;
+import org.hl7.fhir.convertors.conv10_40.SearchParameter10_40;
+import org.hl7.fhir.convertors.conv30_40.SearchParameter30_40;
+import org.hl7.fhir.dstu3.model.CodeType;
+import org.hl7.fhir.dstu3.model.Enumerations;
+import org.hl7.fhir.dstu3.model.SearchParameter;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
@@ -15,7 +19,7 @@ import java.util.List;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +35,10 @@ import java.util.List;
  * #L%
  */
 
-public class FhirResourceDaoSearchParameterDstu3 extends FhirResourceDaoDstu3<SearchParameter> implements IFhirResourceDaoSearchParameter<SearchParameter> {
+public class FhirResourceDaoSearchParameterDstu3 extends BaseHapiFhirResourceDao<SearchParameter> implements IFhirResourceDaoSearchParameter<SearchParameter> {
+
+	@Autowired
+	private ISearchParamExtractor mySearchParamExtractor;
 
 	protected void markAffectedResources(SearchParameter theResource) {
 		Boolean reindex = theResource != null ? CURRENTLY_REINDEXING.get(theResource) : null;
@@ -62,13 +69,7 @@ public class FhirResourceDaoSearchParameterDstu3 extends FhirResourceDaoDstu3<Se
 	protected void validateResourceForStorage(SearchParameter theResource, ResourceTable theEntityToSave) {
 		super.validateResourceForStorage(theResource, theEntityToSave);
 
-		Enum<?> status = theResource.getStatus();
-		List<CodeType> base = theResource.getBase();
-		String expression = theResource.getExpression();
-		FhirContext context = getContext();
-		Enumerations.SearchParamType type = theResource.getType();
-
-		FhirResourceDaoSearchParameterR4.validateSearchParam(type, status, base, expression, context, getConfig());
+		FhirResourceDaoSearchParameterR4.validateSearchParam(SearchParameter30_40.convertSearchParameter(theResource), getContext(), getConfig(), mySearchParamRegistry, mySearchParamExtractor);
 	}
 
 }

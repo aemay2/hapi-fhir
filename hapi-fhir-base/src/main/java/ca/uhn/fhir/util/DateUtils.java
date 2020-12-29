@@ -4,7 +4,7 @@ package ca.uhn.fhir.util;
  * #%L
  * HAPI FHIR - Core Library
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,12 @@ package ca.uhn.fhir.util;
 import java.lang.ref.SoftReference;
 import java.text.ParsePosition;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TimeZone;
 
 /**
  * A utility class for parsing and formatting HTTP dates as used in cookies and
@@ -41,20 +46,32 @@ import java.util.*;
  */
 public final class DateUtils {
 
+	/**
+	 * GMT TimeZone
+	 */
 	public static final TimeZone GMT = TimeZone.getTimeZone("GMT");
+
 	/**
 	 * Date format pattern used to parse HTTP date headers in RFC 1123 format.
 	 */
-	private static final String PATTERN_RFC1123 = "EEE, dd MMM yyyy HH:mm:ss zzz";
+	@SuppressWarnings("WeakerAccess")
+	public static final String PATTERN_RFC1123 = "EEE, dd MMM yyyy HH:mm:ss zzz";
+
 	/**
 	 * Date format pattern used to parse HTTP date headers in RFC 1036 format.
 	 */
-	private static final String PATTERN_RFC1036 = "EEE, dd-MMM-yy HH:mm:ss zzz";
+	@SuppressWarnings("WeakerAccess")
+	public static final String PATTERN_RFC1036 = "EEE, dd-MMM-yy HH:mm:ss zzz";
+
 	/**
 	 * Date format pattern used to parse HTTP date headers in ANSI C
 	 * {@code asctime()} format.
 	 */
-	private static final String PATTERN_ASCTIME = "EEE MMM d HH:mm:ss yyyy";
+	@SuppressWarnings("WeakerAccess")
+	public static final String PATTERN_ASCTIME = "EEE MMM d HH:mm:ss yyyy";
+
+	private static final String PATTERN_INTEGER_DATE = "yyyyMMdd";
+
 	private static final String[] DEFAULT_PATTERNS = new String[]{
 		PATTERN_RFC1123,
 		PATTERN_RFC1036,
@@ -141,6 +158,47 @@ public final class DateUtils {
 			}
 		}
 		return null;
+	}
+
+	public static Date getHighestInstantFromDate(Date theDateValue) {
+		Calendar sourceCal = Calendar.getInstance();
+		sourceCal.setTime(theDateValue);
+
+		Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("GMT-12:00"));
+		copyDateAndTrundateTime(sourceCal, cal);
+		return cal.getTime();
+	}
+
+	public static Date getLowestInstantFromDate(Date theDateValue) {
+		Calendar sourceCal = Calendar.getInstance();
+		sourceCal.setTime(theDateValue);
+
+		Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("GMT+14:00"));
+		copyDateAndTrundateTime(sourceCal, cal);
+		return cal.getTime();
+	}
+
+	private static void copyDateAndTrundateTime(Calendar theSourceCal, Calendar theCal) {
+		theCal.set(Calendar.YEAR, theSourceCal.get(Calendar.YEAR));
+		theCal.set(Calendar.MONTH, theSourceCal.get(Calendar.MONTH));
+		theCal.set(Calendar.DAY_OF_MONTH, theSourceCal.get(Calendar.DAY_OF_MONTH));
+		theCal.set(Calendar.HOUR_OF_DAY, 0);
+		theCal.set(Calendar.MINUTE, 0);
+		theCal.set(Calendar.SECOND, 0);
+		theCal.set(Calendar.MILLISECOND, 0);
+	}
+
+	public static int convertDateToDayInteger(final Date theDateValue) {
+		notNull(theDateValue, "Date value");
+		SimpleDateFormat format = new SimpleDateFormat(PATTERN_INTEGER_DATE);
+		String theDateString = format.format(theDateValue);
+		return Integer.parseInt(theDateString);
+	}
+
+	public static String convertDateToIso8601String(final Date theDateValue) {
+		notNull(theDateValue, "Date value");
+		SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
+		return format.format(theDateValue);
 	}
 
 	/**

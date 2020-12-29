@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.term.loinc;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,12 +32,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_CODESYSTEM_VERSION;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_CONCEPTMAP_VERSION;
 import static org.apache.commons.lang3.StringUtils.trim;
 
 public class LoincIeeeMedicalDeviceCodeHandler extends BaseLoincHandler implements IRecordHandler {
 
-	public static final String LOINC_IEEE_CM_ID = "loinc-to-ieee-device-codes";
-	public static final String LOINC_IEEE_CM_URI = "http://loinc.org/cm/loinc-to-ieee-device-codes";
+	public static final String LOINC_IEEE_CM_ID = "loinc-to-ieee-11073-10101";
+	public static final String LOINC_IEEE_CM_URI = "http://loinc.org/cm/loinc-to-ieee-11073-10101";
 	public static final String LOINC_IEEE_CM_NAME = "LOINC/IEEE Device Code Mappings";
 	private static final String CM_COPYRIGHT = "This content from LOINC® is copyright © 1995 Regenstrief Institute, Inc. and the LOINC Committee, and available at no cost under the license at https://loinc.org/license/. The LOINC/IEEE Medical Device Code Mapping Table contains content from IEEE (http://ieee.org), copyright © 2017 IEEE.";
 
@@ -51,6 +53,13 @@ public class LoincIeeeMedicalDeviceCodeHandler extends BaseLoincHandler implemen
 	@Override
 	public void accept(CSVRecord theRecord) {
 
+		String codeSystemVersionId = myUploadProperties.getProperty(LOINC_CODESYSTEM_VERSION.getCode());
+		String loincIeeeCmVersion;
+		if (codeSystemVersionId != null) {
+			loincIeeeCmVersion =  myUploadProperties.getProperty(LOINC_CONCEPTMAP_VERSION.getCode()) + "-" + codeSystemVersionId;
+		} else {
+			loincIeeeCmVersion = myUploadProperties.getProperty(LOINC_CONCEPTMAP_VERSION.getCode());
+		}
 		String loincNumber = trim(theRecord.get("LOINC_NUM"));
 		String longCommonName = trim(theRecord.get("LOINC_LONG_COMMON_NAME"));
 		String ieeeCode = trim(theRecord.get("IEEE_CF_CODE10"));
@@ -59,19 +68,27 @@ public class LoincIeeeMedicalDeviceCodeHandler extends BaseLoincHandler implemen
 		// LOINC Part -> IEEE 11073:10101 Mappings
 		String sourceCodeSystemUri = ITermLoaderSvc.LOINC_URI;
 		String targetCodeSystemUri = ITermLoaderSvc.IEEE_11073_10101_URI;
+		String conceptMapId;
+		if (codeSystemVersionId != null) {
+			conceptMapId = LOINC_IEEE_CM_ID + "-" + codeSystemVersionId;
+		} else {
+			conceptMapId = LOINC_IEEE_CM_ID;
+		}
 		addConceptMapEntry(
 			new ConceptMapping()
-				.setConceptMapId(LOINC_IEEE_CM_ID)
+				.setConceptMapId(conceptMapId)
 				.setConceptMapUri(LOINC_IEEE_CM_URI)
+				.setConceptMapVersion(loincIeeeCmVersion)
 				.setConceptMapName(LOINC_IEEE_CM_NAME)
 				.setSourceCodeSystem(sourceCodeSystemUri)
+				.setSourceCodeSystemVersion(codeSystemVersionId)
 				.setSourceCode(loincNumber)
 				.setSourceDisplay(longCommonName)
 				.setTargetCodeSystem(targetCodeSystemUri)
 				.setTargetCode(ieeeCode)
 				.setTargetDisplay(ieeeDisplayName)
 				.setEquivalence(Enumerations.ConceptMapEquivalence.EQUAL),
-			CM_COPYRIGHT);
+				CM_COPYRIGHT);
 
 	}
 

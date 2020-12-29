@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.migrate;
  * #%L
  * HAPI FHIR JPA Server - Migration
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ package ca.uhn.fhir.jpa.migrate;
  * #L%
  */
 
-import ca.uhn.fhir.jpa.migrate.taskdef.BaseTableColumnTypeTask;
+import ca.uhn.fhir.jpa.migrate.taskdef.ColumnTypeEnum;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
@@ -31,7 +31,12 @@ import org.hibernate.engine.jdbc.dialect.internal.StandardDialectResolver;
 import org.hibernate.engine.jdbc.dialect.spi.DatabaseMetaDataDialectResolutionInfoAdapter;
 import org.hibernate.engine.jdbc.dialect.spi.DialectResolver;
 import org.hibernate.engine.jdbc.env.internal.NormalizingIdentifierHelperImpl;
-import org.hibernate.engine.jdbc.env.spi.*;
+import org.hibernate.engine.jdbc.env.spi.ExtractedDatabaseMetaData;
+import org.hibernate.engine.jdbc.env.spi.IdentifierHelper;
+import org.hibernate.engine.jdbc.env.spi.JdbcEnvironment;
+import org.hibernate.engine.jdbc.env.spi.LobCreatorBuilder;
+import org.hibernate.engine.jdbc.env.spi.NameQualifierSupport;
+import org.hibernate.engine.jdbc.env.spi.QualifiedObjectNameFormatter;
 import org.hibernate.engine.jdbc.spi.SqlExceptionHelper;
 import org.hibernate.engine.jdbc.spi.TypeInfo;
 import org.hibernate.service.ServiceRegistry;
@@ -44,8 +49,18 @@ import org.springframework.jdbc.core.ColumnMapRowMapper;
 
 import javax.annotation.Nullable;
 import javax.sql.DataSource;
-import java.sql.*;
-import java.util.*;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Set;
 
 import static org.thymeleaf.util.StringUtils.toUpperCase;
 
@@ -53,19 +68,19 @@ public class JdbcUtils {
 	private static final Logger ourLog = LoggerFactory.getLogger(JdbcUtils.class);
 
 	public static class ColumnType {
-		private final BaseTableColumnTypeTask.ColumnTypeEnum myColumnTypeEnum;
+		private final ColumnTypeEnum myColumnTypeEnum;
 		private final Long myLength;
 
-		public ColumnType(BaseTableColumnTypeTask.ColumnTypeEnum theColumnType, Long theLength) {
+		public ColumnType(ColumnTypeEnum theColumnType, Long theLength) {
 			myColumnTypeEnum = theColumnType;
 			myLength = theLength;
 		}
 
-		public ColumnType(BaseTableColumnTypeTask.ColumnTypeEnum theColumnType, int theLength) {
+		public ColumnType(ColumnTypeEnum theColumnType, int theLength) {
 			this(theColumnType, (long) theLength);
 		}
 
-		public ColumnType(BaseTableColumnTypeTask.ColumnTypeEnum theColumnType) {
+		public ColumnType(ColumnTypeEnum theColumnType) {
 			this(theColumnType, null);
 		}
 
@@ -105,7 +120,7 @@ public class JdbcUtils {
 			return b.toString();
 		}
 
-		public BaseTableColumnTypeTask.ColumnTypeEnum getColumnTypeEnum() {
+		public ColumnTypeEnum getColumnTypeEnum() {
 			return myColumnTypeEnum;
 		}
 
@@ -113,10 +128,10 @@ public class JdbcUtils {
 			return myLength;
 		}
 
-		public boolean equals(BaseTableColumnTypeTask.ColumnTypeEnum theColumnType, Long theColumnLength) {
-			return myColumnTypeEnum == theColumnType && (myLength == null || myLength.equals(theColumnLength));
+		public boolean equals(ColumnTypeEnum theTaskColumnType, Long theTaskColumnLength) {
+			ourLog.debug("Comparing existing {} {} to new {} {}", myColumnTypeEnum, myLength, theTaskColumnType, theTaskColumnLength);
+			return myColumnTypeEnum == theTaskColumnType && (theTaskColumnLength == null || theTaskColumnLength.equals(myLength));
 		}
-
 	}
 
 	/**
@@ -223,27 +238,31 @@ public class JdbcUtils {
 						int dataType = indexes.getInt("DATA_TYPE");
 						Long length = indexes.getLong("COLUMN_SIZE");
 						switch (dataType) {
+							case Types.BIT:
+							case Types.BOOLEAN:
+								return new ColumnType(ColumnTypeEnum.BOOLEAN, length);
 							case Types.VARCHAR:
-								return new ColumnType(BaseTableColumnTypeTask.ColumnTypeEnum.STRING, length);
+								return new ColumnType(ColumnTypeEnum.STRING, length);
 							case Types.NUMERIC:
 							case Types.BIGINT:
 							case Types.DECIMAL:
-								return new ColumnType(BaseTableColumnTypeTask.ColumnTypeEnum.LONG, length);
+								return new ColumnType(ColumnTypeEnum.LONG, length);
 							case Types.INTEGER:
-								return new ColumnType(BaseTableColumnTypeTask.ColumnTypeEnum.INT, length);
+								return new ColumnType(ColumnTypeEnum.INT, length);
 							case Types.TIMESTAMP:
 							case Types.TIMESTAMP_WITH_TIMEZONE:
-								return new ColumnType(BaseTableColumnTypeTask.ColumnTypeEnum.DATE_TIMESTAMP, length);
+								return new ColumnType(ColumnTypeEnum.DATE_TIMESTAMP, length);
 							case Types.BLOB:
-								return new ColumnType(BaseTableColumnTypeTask.ColumnTypeEnum.BLOB, length);
+								return new ColumnType(ColumnTypeEnum.BLOB, length);
 							case Types.CLOB:
-								return new ColumnType(BaseTableColumnTypeTask.ColumnTypeEnum.CLOB, length);
+								return new ColumnType(ColumnTypeEnum.CLOB, length);
 							default:
 								throw new IllegalArgumentException("Don't know how to handle datatype " + dataType + " for column " + theColumnName + " on table " + theTableName);
 						}
 
 					}
 
+					ourLog.debug("Unable to find column {} in table {}.", theColumnName, theTableName);
 					return null;
 
 				} catch (SQLException e) {
@@ -287,6 +306,47 @@ public class JdbcUtils {
 							String fkName = indexes.getString("FK_NAME");
 							fkName = toUpperCase(fkName, Locale.US);
 							fkNames.add(fkName);
+						}
+					}
+
+					return fkNames;
+				} catch (SQLException e) {
+					throw new InternalErrorException(e);
+				}
+			});
+		}
+	}
+
+	/**
+	 * Retrieve names of foreign keys that reference a specified foreign key column.
+	 */
+	public static Set<String> getForeignKeysForColumn(DriverTypeEnum.ConnectionProperties theConnectionProperties, String theForeignKeyColumn, String theForeignTable) throws SQLException {
+		DataSource dataSource = Objects.requireNonNull(theConnectionProperties.getDataSource());
+
+		try (Connection connection = dataSource.getConnection()) {
+			return theConnectionProperties.getTxTemplate().execute(t -> {
+				DatabaseMetaData metadata;
+				try {
+					metadata = connection.getMetaData();
+					String catalog = connection.getCatalog();
+					String schema = connection.getSchema();
+
+
+					List<String> parentTables = new ArrayList<>();
+					parentTables.addAll(JdbcUtils.getTableNames(theConnectionProperties));
+
+					String foreignTable = massageIdentifier(metadata, theForeignTable);
+
+					Set<String> fkNames = new HashSet<>();
+					for (String nextParentTable : parentTables) {
+						ResultSet indexes = metadata.getCrossReference(catalog, schema, nextParentTable, catalog, schema, foreignTable);
+
+						while (indexes.next()) {
+							if (theForeignKeyColumn.equals(indexes.getString("FKCOLUMN_NAME"))) {
+								String fkName = indexes.getString("FK_NAME");
+								fkName = toUpperCase(fkName, Locale.US);
+								fkNames.add(fkName);
+							}
 						}
 					}
 
@@ -439,6 +499,9 @@ public class JdbcUtils {
 
 						String tableType = tables.getString("TABLE_TYPE");
 						if ("SYSTEM TABLE".equalsIgnoreCase(tableType)) {
+							continue;
+						}
+						if (SchemaMigrator.HAPI_FHIR_MIGRATION_TABLENAME.equalsIgnoreCase(tableName)) {
 							continue;
 						}
 

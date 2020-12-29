@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.model.entity;
  * #%L
  * HAPI FHIR Model
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ package ca.uhn.fhir.jpa.model.entity;
  * #L%
  */
 
+import ca.uhn.fhir.jpa.model.config.PartitionSettings;
 import ca.uhn.fhir.model.api.IQueryParameterType;
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
@@ -27,7 +28,15 @@ import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 import org.hibernate.search.annotations.Field;
 
-import javax.persistence.*;
+import javax.persistence.Column;
+import javax.persistence.Embeddable;
+import javax.persistence.Entity;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+import javax.persistence.Index;
+import javax.persistence.SequenceGenerator;
+import javax.persistence.Table;
 
 @Embeddable
 @Entity
@@ -61,25 +70,20 @@ public class ResourceIndexedSearchParamCoords extends BaseResourceIndexedSearchP
 	public ResourceIndexedSearchParamCoords() {
 	}
 
-	public ResourceIndexedSearchParamCoords(String theName, double theLatitude, double theLongitude) {
-		setParamName(theName);
+	public ResourceIndexedSearchParamCoords(PartitionSettings thePartitionSettings, String theResourceType, String theParamName, double theLatitude, double theLongitude) {
+		setPartitionSettings(thePartitionSettings);
+		setResourceType(theResourceType);
+		setParamName(theParamName);
 		setLatitude(theLatitude);
 		setLongitude(theLongitude);
+		calculateHashes();
 	}
 
 	@Override
-	@PrePersist
 	public void calculateHashes() {
-		if (myHashIdentity == null) {
-			String resourceType = getResourceType();
-			String paramName = getParamName();
-			setHashIdentity(calculateHashIdentity(resourceType, paramName));
-		}
-	}
-
-	@Override
-	protected void clearHashes() {
-		myHashIdentity = null;
+		String resourceType = getResourceType();
+		String paramName = getParamName();
+		setHashIdentity(calculateHashIdentity(getPartitionSettings(), getPartitionId(), resourceType, paramName));
 	}
 
 	@Override
@@ -95,17 +99,21 @@ public class ResourceIndexedSearchParamCoords extends BaseResourceIndexedSearchP
 		}
 		ResourceIndexedSearchParamCoords obj = (ResourceIndexedSearchParamCoords) theObj;
 		EqualsBuilder b = new EqualsBuilder();
+		b.append(getResourceType(), obj.getResourceType());
 		b.append(getParamName(), obj.getParamName());
-		b.append(getResource(), obj.getResource());
 		b.append(getLatitude(), obj.getLatitude());
 		b.append(getLongitude(), obj.getLongitude());
-		b.append(getHashIdentity(), obj.getHashIdentity());
+		b.append(isMissing(), obj.isMissing());
 		return b.isEquals();
 	}
 
-	public Long getHashIdentity() {
-		calculateHashes();
-		return myHashIdentity;
+	@Override
+	public <T extends BaseResourceIndex> void copyMutableValuesFrom(T theSource) {
+		super.copyMutableValuesFrom(theSource);
+		ResourceIndexedSearchParamCoords source = (ResourceIndexedSearchParamCoords) theSource;
+		myLatitude = source.getLatitude();
+		myLongitude = source.getLongitude();
+		myHashIdentity = source.myHashIdentity;
 	}
 
 	public void setHashIdentity(Long theHashIdentity) {
@@ -119,7 +127,7 @@ public class ResourceIndexedSearchParamCoords extends BaseResourceIndexedSearchP
 
 	@Override
 	public void setId(Long theId) {
-		myId =theId;
+		myId = theId;
 	}
 
 
@@ -145,7 +153,7 @@ public class ResourceIndexedSearchParamCoords extends BaseResourceIndexedSearchP
 	public int hashCode() {
 		HashCodeBuilder b = new HashCodeBuilder();
 		b.append(getParamName());
-		b.append(getResource());
+		b.append(getResourceType());
 		b.append(getLatitude());
 		b.append(getLongitude());
 		return b.toHashCode();
@@ -161,8 +169,12 @@ public class ResourceIndexedSearchParamCoords extends BaseResourceIndexedSearchP
 		ToStringBuilder b = new ToStringBuilder(this, ToStringStyle.SHORT_PREFIX_STYLE);
 		b.append("paramName", getParamName());
 		b.append("resourceId", getResourcePid());
-		b.append("lat", getLatitude());
-		b.append("lon", getLongitude());
+		if (isMissing()) {
+			b.append("missing", isMissing());
+		} else {
+			b.append("lat", getLatitude());
+			b.append("lon", getLongitude());
+		}
 		return b.build();
 	}
 

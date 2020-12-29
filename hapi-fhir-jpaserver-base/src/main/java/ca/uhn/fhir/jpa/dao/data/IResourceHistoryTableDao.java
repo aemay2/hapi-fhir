@@ -6,18 +6,13 @@ import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.jpa.repository.Temporal;
 import org.springframework.data.repository.query.Param;
-
-import javax.persistence.TemporalType;
-import java.util.Collection;
-import java.util.Date;
 
 /*
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,36 +30,6 @@ import java.util.Date;
 
 public interface IResourceHistoryTableDao extends JpaRepository<ResourceHistoryTable, Long> {
 
-	@Query("SELECT COUNT(*) FROM ResourceHistoryTable t WHERE t.myUpdated >= :cutoff")
-	int countForAllResourceTypes(
-		@Temporal(value = TemporalType.TIMESTAMP) @Param("cutoff") Date theCutoff
-	);
-
-	@Query("SELECT COUNT(*) FROM ResourceHistoryTable t")
-	int countForAllResourceTypes(
-	);
-
-	@Query("SELECT COUNT(*) FROM ResourceHistoryTable t WHERE t.myResourceId = :id AND t.myUpdated >= :cutoff")
-	int countForResourceInstance(
-		@Param("id") Long theId,
-		@Temporal(value = TemporalType.TIMESTAMP) @Param("cutoff") Date theCutoff
-	);
-
-	@Query("SELECT COUNT(*) FROM ResourceHistoryTable t WHERE t.myResourceId = :id")
-	int countForResourceInstance(
-		@Param("id") Long theId
-	);
-
-	@Query("SELECT COUNT(*) FROM ResourceHistoryTable t WHERE t.myResourceType = :type AND t.myUpdated >= :cutoff")
-	int countForResourceType(
-		@Param("type") String theType,
-		@Temporal(value = TemporalType.TIMESTAMP) @Param("cutoff") Date theCutoff
-	);
-
-	@Query("SELECT COUNT(*) FROM ResourceHistoryTable t WHERE t.myResourceType = :type")
-	int countForResourceType(
-		@Param("type") String theType
-	);
 
 	@Query("SELECT t FROM ResourceHistoryTable t LEFT OUTER JOIN FETCH t.myProvenance WHERE t.myResourceId = :id AND t.myResourceVersion = :version")
 	ResourceHistoryTable findForIdAndVersionAndFetchProvenance(@Param("id") long theId, @Param("version") long theVersion);
@@ -91,14 +56,12 @@ public interface IResourceHistoryTableDao extends JpaRepository<ResourceHistoryT
 		"LEFT OUTER JOIN ResourceTable t ON (v.myResourceId = t.myId) " +
 		"WHERE v.myResourceVersion != t.myVersion")
 	Slice<Long> findIdsOfPreviousVersionsOfResources(Pageable thePage);
-	
-	@Query("" + 
-		"SELECT h FROM ResourceHistoryTable h " + 
-		"INNER JOIN ResourceTable r ON (r.myId = h.myResourceId and r.myVersion = h.myResourceVersion) " + 
-		"WHERE r.myId in (:pids)")
-	Collection<ResourceHistoryTable> findByResourceIds(@Param("pids") Collection<Long> pids);
 
 	@Modifying
 	@Query("UPDATE ResourceHistoryTable r SET r.myResourceVersion = :newVersion WHERE r.myResourceId = :id AND r.myResourceVersion = :oldVersion")
 	void updateVersion(@Param("id") long theId, @Param("oldVersion") long theOldVersion, @Param("newVersion") long theNewVersion);
+
+	@Modifying
+	@Query("DELETE FROM ResourceHistoryTable t WHERE t.myId = :pid")
+	void deleteByPid(@Param("pid") Long theId);
 }

@@ -1,11 +1,12 @@
 package ca.uhn.fhir.parser.json;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import java.io.StringReader;
 
-import org.junit.Test;
+import ca.uhn.fhir.parser.json.jackson.JacksonStructure;
+import org.junit.jupiter.api.Test;
 
 public class JsonLikeStructureTest {
 //	private static FhirContext ourCtx;
@@ -39,7 +40,7 @@ public class JsonLikeStructureTest {
 	@Test
 	public void testStructureLoading() {
 		StringReader reader = new StringReader(TEST_STRUCTURELOADING_DATA);
-		JsonLikeStructure jsonStructure = new GsonStructure();
+		JsonLikeStructure jsonStructure = new JacksonStructure();
 		jsonStructure.load(reader);
 		
 		JsonLikeObject rootObject = jsonStructure.getRootObject();
@@ -70,7 +71,7 @@ public class JsonLikeStructureTest {
 	@Test
 	public void testJsonAndDataTypes() {
 		StringReader reader = new StringReader(TEST_JSONTYPES_DATA);
-		JsonLikeStructure jsonStructure = new GsonStructure();
+		JsonLikeStructure jsonStructure = new JacksonStructure();
 		jsonStructure.load(reader);
 		
 		JsonLikeObject rootObject = jsonStructure.getRootObject();

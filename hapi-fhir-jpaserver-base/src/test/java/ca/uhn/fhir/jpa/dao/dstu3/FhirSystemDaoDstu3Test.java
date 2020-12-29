@@ -1,64 +1,125 @@
 package ca.uhn.fhir.jpa.dao.dstu3;
 
+import ca.uhn.fhir.interceptor.api.IInterceptorService;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
+import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
 import ca.uhn.fhir.jpa.dao.BaseHapiFhirDao;
-import ca.uhn.fhir.jpa.dao.DaoConfig;
 import ca.uhn.fhir.jpa.dao.GZipUtil;
 import ca.uhn.fhir.jpa.dao.r4.FhirSystemDaoR4;
-import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
+import ca.uhn.fhir.jpa.interceptor.CascadingDeleteInterceptor;
 import ca.uhn.fhir.jpa.model.entity.ResourceTag;
 import ca.uhn.fhir.jpa.model.entity.TagTypeEnum;
 import ca.uhn.fhir.jpa.provider.SystemProviderDstu2Test;
+import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
 import ca.uhn.fhir.model.api.ResourceMetadataKeyEnum;
 import ca.uhn.fhir.model.primitive.IdDt;
 import ca.uhn.fhir.parser.LenientErrorHandler;
 import ca.uhn.fhir.rest.api.Constants;
-import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
 import ca.uhn.fhir.rest.param.ReferenceParam;
 import ca.uhn.fhir.rest.param.TokenParam;
-import ca.uhn.fhir.rest.server.exceptions.*;
-import ca.uhn.fhir.rest.server.interceptor.IServerInterceptor.ActionRequestDetails;
-import ca.uhn.fhir.util.TestUtil;
+import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+import ca.uhn.fhir.rest.server.exceptions.PreconditionFailedException;
+import ca.uhn.fhir.rest.server.exceptions.ResourceGoneException;
+import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
+import ca.uhn.fhir.rest.server.exceptions.ResourceVersionConflictException;
+import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
+import ca.uhn.fhir.util.StopWatch;
 import com.google.common.base.Charsets;
+import com.google.common.collect.Maps;
 import org.apache.commons.io.IOUtils;
-import org.hl7.fhir.dstu3.model.*;
-import org.hl7.fhir.dstu3.model.Bundle.*;
+import org.hl7.fhir.dstu3.model.Appointment;
+import org.hl7.fhir.dstu3.model.Attachment;
+import org.hl7.fhir.dstu3.model.Binary;
+import org.hl7.fhir.dstu3.model.Bundle;
+import org.hl7.fhir.dstu3.model.Bundle.BundleEntryComponent;
+import org.hl7.fhir.dstu3.model.Bundle.BundleEntryRequestComponent;
+import org.hl7.fhir.dstu3.model.Bundle.BundleEntryResponseComponent;
+import org.hl7.fhir.dstu3.model.Bundle.BundleType;
+import org.hl7.fhir.dstu3.model.Bundle.HTTPVerb;
+import org.hl7.fhir.dstu3.model.Coding;
+import org.hl7.fhir.dstu3.model.Condition;
+import org.hl7.fhir.dstu3.model.DateTimeType;
+import org.hl7.fhir.dstu3.model.DiagnosticReport;
+import org.hl7.fhir.dstu3.model.Encounter;
+import org.hl7.fhir.dstu3.model.EpisodeOfCare;
+import org.hl7.fhir.dstu3.model.IdType;
+import org.hl7.fhir.dstu3.model.Medication;
+import org.hl7.fhir.dstu3.model.MedicationRequest;
+import org.hl7.fhir.dstu3.model.Meta;
+import org.hl7.fhir.dstu3.model.Observation;
 import org.hl7.fhir.dstu3.model.Observation.ObservationStatus;
+import org.hl7.fhir.dstu3.model.OperationOutcome;
 import org.hl7.fhir.dstu3.model.OperationOutcome.IssueSeverity;
+import org.hl7.fhir.dstu3.model.Organization;
+import org.hl7.fhir.dstu3.model.Patient;
+import org.hl7.fhir.dstu3.model.Quantity;
+import org.hl7.fhir.dstu3.model.Reference;
+import org.hl7.fhir.dstu3.model.Resource;
+import org.hl7.fhir.dstu3.model.UriType;
 import org.hl7.fhir.instance.model.api.IAnyResource;
 import org.hl7.fhir.instance.model.api.IIdType;
-import org.junit.*;
-import org.mockito.ArgumentCaptor;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.mockito.internal.stubbing.answers.CallsRealMethods;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallbackWithoutResult;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
-import static org.mockito.Matchers.eq;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.emptyString;
+import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.startsWith;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.when;
 
 public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(FhirSystemDaoDstu3Test.class);
+	@Autowired
+	private DaoRegistry myDaoRegistry;
+	@Autowired
+	private IInterceptorService myInterceptorBroadcaster;
 
-	@After
+	@AfterEach
 	public void after() {
 		myDaoConfig.setAllowInlineMatchUrlReferences(false);
 		myDaoConfig.setAllowMultipleDelete(new DaoConfig().isAllowMultipleDelete());
+		myDaoConfig.setIndexMissingFields(new DaoConfig().getIndexMissingFields());
+		myDaoConfig.setMaximumDeleteConflictQueryCount(new DaoConfig().getMaximumDeleteConflictQueryCount());
+
 	}
 
-	@Before
+	@BeforeEach
 	public void beforeDisableResultReuse() {
 		myDaoConfig.setReuseCachedSearchResultsForMillis(null);
 	}
@@ -344,7 +405,7 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 
 
 	@Test
-	@Ignore
+	@Disabled
 	public void testProcessCollectionAsBatch() throws IOException {
 		byte[] inputBytes = IOUtils.toByteArray(getClass().getResourceAsStream("/dstu3/Reilly_Libby_73.json.gz"));
 		String input = GZipUtil.decompress(inputBytes);
@@ -1067,7 +1128,7 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 	}
 
 	@Test
-	public void testTransactionCreateWithLinks() throws IOException {
+	public void testTransactionCreateWithLinks() {
 		Bundle request = new Bundle();
 		request.setType(BundleType.TRANSACTION);
 
@@ -1409,7 +1470,7 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 	}
 
 	@Test
-	public void testTransactionDoesNotLeavePlaceholderIds() throws Exception {
+	public void testTransactionDoesNotLeavePlaceholderIds() {
 		String input;
 		try {
 			input = IOUtils.toString(getClass().getResourceAsStream("/cdr-bundle.json"), StandardCharsets.UTF_8);
@@ -1701,7 +1762,7 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 
 	}
 
-	@Test(expected = InvalidRequestException.class)
+	@Test
 	public void testTransactionFailsWithDuplicateIds() {
 		Bundle request = new Bundle();
 
@@ -1714,8 +1775,12 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 		patient2.setId(new IdType("Patient/testTransactionFailsWithDusplicateIds"));
 		patient2.addIdentifier().setSystem("urn:system").setValue("testPersistWithSimpleLinkP02");
 		request.addEntry().setResource(patient2).getRequest().setMethod(HTTPVerb.POST);
-
-		mySystemDao.transaction(mySrd, request);
+		try {
+			mySystemDao.transaction(mySrd, request);
+			fail();
+		} catch (InvalidRequestException e) {
+			assertEquals("Transaction bundle contains multiple resources with ID: Patient/testTransactionFailsWithDusplicateIds", e.getMessage());
+		}
 	}
 
 	@Test
@@ -1781,6 +1846,42 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 
 		assertEquals("201 Created", resp.getEntry().get(0).getResponse().getStatus());
 		assertEquals("201 Created", resp.getEntry().get(1).getResponse().getStatus());
+	}
+
+	/**
+	 * There is nothing here that isn't tested elsewhere, but it's useful for testing a large transaction followed
+	 * by a large cascading delete
+	 */
+	@Test
+	@Disabled
+	public void testTransactionFromBundle_Slow() throws Exception {
+		myDaoConfig.setIndexMissingFields(DaoConfig.IndexEnabledEnum.DISABLED);
+		myDaoConfig.setMaximumDeleteConflictQueryCount(10000);
+
+		StopWatch sw = new StopWatch();
+		sw.startTask("Parse Bundle");
+		Bundle bundle = loadBundle("/dstu3/slow_bundle.xml");
+
+		sw.startTask("Process transaction");
+		Bundle resp = mySystemDao.transaction(mySrd, bundle);
+		ourLog.info("Tasks: {}", sw.formatTaskDurations());
+
+		assertEquals("201 Created", resp.getEntry().get(0).getResponse().getStatus());
+
+
+		doAnswer(new CallsRealMethods()).when(mySrd).setParameters(any());
+		when(mySrd.getParameters()).thenCallRealMethod();
+		when(mySrd.getUserData()).thenReturn(new HashMap<>());
+		Map<String, String[]> params = Maps.newHashMap();
+		params.put(Constants.PARAMETER_CASCADE_DELETE, new String[]{Constants.CASCADE_DELETE});
+		mySrd.setParameters(params);
+
+		CascadingDeleteInterceptor deleteInterceptor = new CascadingDeleteInterceptor(myFhirCtx, myDaoRegistry, myInterceptorBroadcaster);
+		myInterceptorBroadcaster.registerInterceptor(deleteInterceptor);
+
+
+		myPatientDao.deleteByUrl("Patient?identifier=http://fhir.nl/fhir/NamingSystem/bsn|900197341", mySrd);
+
 	}
 
 	@Test
@@ -1886,7 +1987,6 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 	}
 
 
-
 	@Test
 	public void testTransactionReadWithIfNoneMatch() {
 		String methodName = "testTransactionReadWithIfNoneMatch";
@@ -1950,7 +2050,7 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 		ourLog.info("Updated patient, got id: {}", idv2);
 
 		Bundle request = new Bundle();
-		request.addEntry().getRequest().setMethod(HTTPVerb.GET).setUrl("Patient?" + Constants.PARAM_COUNT + "=1");
+		request.addEntry().getRequest().setMethod(HTTPVerb.GET).setUrl("Patient?" + Constants.PARAM_COUNT + "=1&_total=accurate");
 		Bundle resp = mySystemDao.transaction(mySrd, request);
 
 		assertEquals(1, resp.getEntry().size());
@@ -2024,7 +2124,7 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 		assertThat(nextEntry.getResponse().getLocation(), not(containsString("test")));
 		assertEquals(id.toVersionless(), p.getIdElement().toVersionless());
 		assertNotEquals(id, p.getId());
-		assertThat(p.getId().toString(), endsWith("/_history/2"));
+		assertThat(p.getId(), endsWith("/_history/2"));
 
 		nextEntry = resp.getEntry().get(0);
 		assertEquals(Constants.STATUS_HTTP_200_OK + " OK", nextEntry.getResponse().getStatus());
@@ -2180,7 +2280,7 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 	}
 
 	@Test
-	public void testTransactionWIthInvalidPlaceholder() throws Exception {
+	public void testTransactionWIthInvalidPlaceholder() {
 		Bundle res = new Bundle();
 		res.setType(BundleType.TRANSACTION);
 
@@ -2237,7 +2337,7 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 	 * Format changed, source isn't valid
 	 */
 	@Test
-	@Ignore
+	@Disabled
 	public void testTransactionWithBundledValidationSourceAndTarget() throws Exception {
 
 		InputStream bundleRes = SystemProviderDstu2Test.class.getResourceAsStream("/questionnaire-sdc-profile-example-ussg-fht.xml");
@@ -2514,8 +2614,8 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 
 		new TransactionTemplate(myTxManager).execute(new TransactionCallbackWithoutResult() {
 			@Override
-			protected void doInTransactionWithoutResult(TransactionStatus theStatus) {
-				Set<String> values = new HashSet<String>();
+			protected void doInTransactionWithoutResult(@Nonnull TransactionStatus theStatus) {
+				Set<String> values = new HashSet<>();
 				for (ResourceTag next : myResourceTagDao.findAll()) {
 					if (!values.add(next.toString())) {
 						ourLog.info("Found duplicate tag on resource of type {}", next.getResource().getResourceType());
@@ -2788,110 +2888,8 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 		assertEquals(1, found.size().intValue());
 	}
 
-	//
-	//
-	// /**
-	// * Issue #55
-	// */
-	// @Test
-	// public void testTransactionWithCidIds() throws Exception {
-	// Bundle request = new Bundle();
-	//
-	// Patient p1 = new Patient();
-	// p1.setId("cid:patient1");
-	// p1.addIdentifier().setSystem("system").setValue("testTransactionWithCidIds01");
-	// res.add(p1);
-	//
-	// Observation o1 = new Observation();
-	// o1.setId("cid:observation1");
-	// o1.getIdentifier().setSystem("system").setValue("testTransactionWithCidIds02");
-	// o1.setSubject(new Reference("Patient/cid:patient1"));
-	// res.add(o1);
-	//
-	// Observation o2 = new Observation();
-	// o2.setId("cid:observation2");
-	// o2.getIdentifier().setSystem("system").setValue("testTransactionWithCidIds03");
-	// o2.setSubject(new Reference("Patient/cid:patient1"));
-	// res.add(o2);
-	//
-	// ourSystemDao.transaction(res);
-	//
-	// assertTrue(p1.getId().getValue(), p1.getId().getIdPart().matches("^[0-9]+$"));
-	// assertTrue(o1.getId().getValue(), o1.getId().getIdPart().matches("^[0-9]+$"));
-	// assertTrue(o2.getId().getValue(), o2.getId().getIdPart().matches("^[0-9]+$"));
-	//
-	// assertThat(o1.getSubject().getReference().getValue(), endsWith("Patient/" + p1.getId().getIdPart()));
-	// assertThat(o2.getSubject().getReference().getValue(), endsWith("Patient/" + p1.getId().getIdPart()));
-	//
-	// }
-	//
-	// @Test
-	// public void testTransactionWithDelete() throws Exception {
-	// Bundle request = new Bundle();
-	//
-	// /*
-	// * Create 3
-	// */
-	//
-	// List<IResource> res;
-	// res = new ArrayList<IResource>();
-	//
-	// Patient p1 = new Patient();
-	// p1.addIdentifier().setSystem("urn:system").setValue("testTransactionWithDelete");
-	// res.add(p1);
-	//
-	// Patient p2 = new Patient();
-	// p2.addIdentifier().setSystem("urn:system").setValue("testTransactionWithDelete");
-	// res.add(p2);
-	//
-	// Patient p3 = new Patient();
-	// p3.addIdentifier().setSystem("urn:system").setValue("testTransactionWithDelete");
-	// res.add(p3);
-	//
-	// ourSystemDao.transaction(res);
-	//
-	// /*
-	// * Verify
-	// */
-	//
-	// IBundleProvider results = ourPatientDao.search(Patient.SP_IDENTIFIER, new TokenParam("urn:system",
-	// "testTransactionWithDelete"));
-	// assertEquals(3, results.size());
-	//
-	// /*
-	// * Now delete 2
-	// */
-	//
-	// request = new Bundle();
-	// res = new ArrayList<IResource>();
-	// List<IResource> existing = results.getResources(0, 3);
-	//
-	// p1 = new Patient();
-	// p1.setId(existing.get(0).getId());
-	// ResourceMetadataKeyEnum.DELETED_AT.put(p1, InstantDt.withCurrentTime());
-	// res.add(p1);
-	//
-	// p2 = new Patient();
-	// p2.setId(existing.get(1).getId());
-	// ResourceMetadataKeyEnum.DELETED_AT.put(p2, InstantDt.withCurrentTime());
-	// res.add(p2);
-	//
-	// ourSystemDao.transaction(res);
-	//
-	// /*
-	// * Verify
-	// */
-	//
-	// IBundleProvider results2 = ourPatientDao.search(Patient.SP_IDENTIFIER, new TokenParam("urn:system",
-	// "testTransactionWithDelete"));
-	// assertEquals(1, results2.size());
-	// List<IResource> existing2 = results2.getResources(0, 1);
-	// assertEquals(existing2.get(0).getId(), existing.get(2).getId());
-	//
-	// }
-
 	@Test
-	public void testTransactionWithRelativeOidIds() throws Exception {
+	public void testTransactionWithRelativeOidIds() {
 		Bundle res = new Bundle();
 		res.setType(BundleType.TRANSACTION);
 
@@ -2917,9 +2915,9 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 		assertEquals(BundleType.TRANSACTIONRESPONSE, resp.getTypeElement().getValue());
 		assertEquals(3, resp.getEntry().size());
 
-		assertTrue(resp.getEntry().get(0).getResponse().getLocation(), new IdType(resp.getEntry().get(0).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"));
-		assertTrue(resp.getEntry().get(1).getResponse().getLocation(), new IdType(resp.getEntry().get(1).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"));
-		assertTrue(resp.getEntry().get(2).getResponse().getLocation(), new IdType(resp.getEntry().get(2).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"));
+		assertTrue(new IdType(resp.getEntry().get(0).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"), resp.getEntry().get(0).getResponse().getLocation());
+		assertTrue(new IdType(resp.getEntry().get(1).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"), resp.getEntry().get(1).getResponse().getLocation());
+		assertTrue(new IdType(resp.getEntry().get(2).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"), resp.getEntry().get(2).getResponse().getLocation());
 
 		o1 = myObservationDao.read(new IdType(resp.getEntry().get(1).getResponse().getLocation()), mySrd);
 		o2 = myObservationDao.read(new IdType(resp.getEntry().get(2).getResponse().getLocation()), mySrd);
@@ -2932,7 +2930,7 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 	 * This is not the correct way to do it, but we'll allow it to be lenient
 	 */
 	@Test
-	public void testTransactionWithRelativeOidIdsQualified() throws Exception {
+	public void testTransactionWithRelativeOidIdsQualified() {
 		Bundle res = new Bundle();
 		res.setType(BundleType.TRANSACTION);
 
@@ -2958,9 +2956,9 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 		assertEquals(BundleType.TRANSACTIONRESPONSE, resp.getTypeElement().getValue());
 		assertEquals(3, resp.getEntry().size());
 
-		assertTrue(resp.getEntry().get(0).getResponse().getLocation(), new IdType(resp.getEntry().get(0).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"));
-		assertTrue(resp.getEntry().get(1).getResponse().getLocation(), new IdType(resp.getEntry().get(1).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"));
-		assertTrue(resp.getEntry().get(2).getResponse().getLocation(), new IdType(resp.getEntry().get(2).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"));
+		assertTrue(new IdType(resp.getEntry().get(0).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"), resp.getEntry().get(0).getResponse().getLocation());
+		assertTrue(new IdType(resp.getEntry().get(1).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"), resp.getEntry().get(1).getResponse().getLocation());
+		assertTrue(new IdType(resp.getEntry().get(2).getResponse().getLocation()).getIdPart().matches("^[0-9]+$"), resp.getEntry().get(2).getResponse().getLocation());
 
 		o1 = myObservationDao.read(new IdType(resp.getEntry().get(1).getResponse().getLocation()), mySrd);
 		o2 = myObservationDao.read(new IdType(resp.getEntry().get(2).getResponse().getLocation()), mySrd);
@@ -3100,10 +3098,5 @@ public class FhirSystemDaoDstu3Test extends BaseJpaDstu3SystemTest {
 
 	}
 
-
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
-	}
 
 }

@@ -1,17 +1,17 @@
 package ca.uhn.fhir.jpa.provider.r5;
 
-import ca.uhn.fhir.jpa.config.WebsocketDispatcherConfig;
-import ca.uhn.fhir.jpa.dao.DaoRegistry;
+import ca.uhn.fhir.context.support.IValidationSupport;
+import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
+import ca.uhn.fhir.jpa.api.svc.ISearchCoordinatorSvc;
 import ca.uhn.fhir.jpa.dao.r5.BaseJpaR5Test;
 import ca.uhn.fhir.jpa.provider.GraphQLProvider;
 import ca.uhn.fhir.jpa.provider.TerminologyUploaderProvider;
 import ca.uhn.fhir.jpa.search.DatabaseBackedPagingProvider;
-import ca.uhn.fhir.jpa.search.ISearchCoordinatorSvc;
-import ca.uhn.fhir.jpa.searchparam.registry.SearchParamRegistryR5;
-import ca.uhn.fhir.jpa.subscription.SubscriptionMatcherInterceptor;
-import ca.uhn.fhir.jpa.subscription.module.cache.SubscriptionLoader;
+import ca.uhn.fhir.jpa.searchparam.registry.SearchParamRegistryImpl;
+import ca.uhn.fhir.jpa.subscription.match.config.WebsocketDispatcherConfig;
+import ca.uhn.fhir.jpa.subscription.match.registry.SubscriptionLoader;
+import ca.uhn.fhir.jpa.subscription.submit.interceptor.SubscriptionMatcherInterceptor;
 import ca.uhn.fhir.jpa.util.ResourceCountCache;
-import ca.uhn.fhir.jpa.validation.JpaValidationSupportChainR5;
 import ca.uhn.fhir.narrative.DefaultThymeleafNarrativeGenerator;
 import ca.uhn.fhir.parser.StrictErrorHandler;
 import ca.uhn.fhir.rest.api.EncodingEnum;
@@ -34,9 +34,9 @@ import org.hl7.fhir.r5.model.Bundle.BundleEntryComponent;
 import org.hl7.fhir.r5.model.Parameters;
 import org.hl7.fhir.r5.model.Parameters.ParametersParameterComponent;
 import org.hl7.fhir.r5.model.Patient;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.context.ContextLoader;
 import org.springframework.web.context.WebApplicationContext;
@@ -52,22 +52,22 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public abstract class BaseResourceProviderR5Test extends BaseJpaR5Test {
 
-	protected static JpaValidationSupportChainR5 myValidationSupport;
+	protected static IValidationSupport myValidationSupport;
 	protected static CloseableHttpClient ourHttpClient;
 	protected static int ourPort;
 	protected static RestfulServer ourRestServer;
 	protected static String ourServerBase;
-	protected static SearchParamRegistryR5 ourSearchParamRegistry;
+	protected static SearchParamRegistryImpl ourSearchParamRegistry;
 	private static DatabaseBackedPagingProvider ourPagingProvider;
 	protected static ISearchCoordinatorSvc mySearchCoordinatorSvc;
 	private static GenericWebApplicationContext ourWebApplicationContext;
 	private static SubscriptionMatcherInterceptor ourSubscriptionMatcherInterceptor;
 	protected static Server ourServer;
-	protected IGenericClient ourClient;
+	protected IGenericClient myClient;
 	ResourceCountCache ourResourceCountsCache;
 	private Object ourGraphQLProvider;
 	private boolean ourRestHookSubscriptionInterceptorRequested;
@@ -82,14 +82,16 @@ public abstract class BaseResourceProviderR5Test extends BaseJpaR5Test {
 		super();
 	}
 
-	@After
+	@AfterEach
 	public void after() throws Exception {
 		myFhirCtx.getRestfulClientFactory().setServerValidationMode(ServerValidationModeEnum.ONCE);
-		ourRestServer.getInterceptorService().unregisterAllInterceptors();
+		if (ourRestServer != null) {
+			ourRestServer.getInterceptorService().unregisterAllInterceptors();
+		}
 	}
 
 	@SuppressWarnings({"unchecked", "rawtypes"})
-	@Before
+	@BeforeEach
 	public void before() throws Exception {
 		myFhirCtx.getRestfulClientFactory().setServerValidationMode(ServerValidationModeEnum.NEVER);
 		myFhirCtx.getRestfulClientFactory().setSocketTimeout(1200 * 1000);
@@ -109,7 +111,7 @@ public abstract class BaseResourceProviderR5Test extends BaseJpaR5Test {
 
 			ourRestServer.registerProvider(myAppCtx.getBean(GraphQLProvider.class));
 
-			JpaConformanceProviderR5 confProvider = new JpaConformanceProviderR5(ourRestServer, mySystemDao, myDaoConfig);
+			JpaConformanceProviderR5 confProvider = new JpaConformanceProviderR5(ourRestServer, mySystemDao, myDaoConfig, ourSearchParamRegistry);
 			confProvider.setImplementationDescription("THIS IS THE DESC");
 			ourRestServer.setServerConformanceProvider(confProvider);
 
@@ -162,13 +164,13 @@ public abstract class BaseResourceProviderR5Test extends BaseJpaR5Test {
             ourServerBase = "http://localhost:" + ourPort + "/fhir/context";
 
 			WebApplicationContext wac = WebApplicationContextUtils.getWebApplicationContext(subsServletHolder.getServlet().getServletConfig().getServletContext());
-			myValidationSupport = wac.getBean(JpaValidationSupportChainR5.class);
+			myValidationSupport = wac.getBean(IValidationSupport.class);
 			mySearchCoordinatorSvc = wac.getBean(ISearchCoordinatorSvc.class);
-			ourSearchParamRegistry = wac.getBean(SearchParamRegistryR5.class);
+			ourSearchParamRegistry = wac.getBean(SearchParamRegistryImpl.class);
 			ourSubscriptionMatcherInterceptor = wac.getBean(SubscriptionMatcherInterceptor.class);
-			ourSubscriptionMatcherInterceptor.start();
 
 			myFhirCtx.getRestfulClientFactory().setSocketTimeout(5000000);
+			confProvider.setSearchParamRegistry(ourSearchParamRegistry);
 
 			PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager(5000, TimeUnit.MILLISECONDS);
 			HttpClientBuilder builder = HttpClientBuilder.create();
@@ -181,9 +183,9 @@ public abstract class BaseResourceProviderR5Test extends BaseJpaR5Test {
 
 		ourRestServer.setPagingProvider(ourPagingProvider);
 
-		ourClient = myFhirCtx.newRestfulGenericClient(ourServerBase);
+		myClient = myFhirCtx.newRestfulGenericClient(ourServerBase);
 		if (shouldLogClient()) {
-			ourClient.registerInterceptor(new LoggingInterceptor());
+			myClient.registerInterceptor(new LoggingInterceptor());
 		}
 	}
 
@@ -203,34 +205,16 @@ public abstract class BaseResourceProviderR5Test extends BaseJpaR5Test {
 		return names;
 	}
 
-	protected void waitForActivatedSubscriptionCount(int theSize) throws Exception {
-		for (int i = 0; ; i++) {
-			if (i == 10) {
-				fail("Failed to init subscriptions");
-			}
-			try {
-				mySubscriptionLoader.doSyncSubscriptionsForUnitTest();
-				break;
-			} catch (ResourceVersionConflictException e) {
-				Thread.sleep(250);
-			}
-		}
-
-		TestUtil.waitForSize(theSize, () -> mySubscriptionRegistry.size());
-		Thread.sleep(500);
-	}
-
-	@AfterClass
+	@AfterAll
 	public static void afterClassClearContextBaseResourceProviderR5Test() throws Exception {
 		JettyUtil.closeServer(ourServer);
 		ourHttpClient.close();
 		ourServer = null;
 		ourHttpClient = null;
-		myValidationSupport.flush();
+		myValidationSupport.invalidateCaches();
 		myValidationSupport = null;
 		ourWebApplicationContext.close();
 		ourWebApplicationContext = null;
-		TestUtil.clearAllStaticFieldsForUnitTest();
 	}
 
 	public static int getNumberOfParametersByName(Parameters theParameters, String theName) {

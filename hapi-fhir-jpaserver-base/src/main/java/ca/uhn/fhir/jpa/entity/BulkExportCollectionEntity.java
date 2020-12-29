@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.entity;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,20 +23,21 @@ package ca.uhn.fhir.jpa.entity;
 import ca.uhn.fhir.jpa.model.entity.ResourceTable;
 
 import javax.persistence.*;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 
 @Entity
 @Table(name = "HFJ_BLK_EXPORT_COLLECTION")
-public class BulkExportCollectionEntity {
+public class BulkExportCollectionEntity implements Serializable {
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.AUTO, generator = "SEQ_BLKEXCOL_PID")
 	@SequenceGenerator(name = "SEQ_BLKEXCOL_PID", sequenceName = "SEQ_BLKEXCOL_PID")
 	@Column(name = "PID")
 	private Long myId;
-	@ManyToOne
-	@JoinColumn(name = "JOB_PID", referencedColumnName = "PID", nullable = false, foreignKey = @ForeignKey(name="FK_BLKEXCOL_JOB"))
+	@ManyToOne()
+	@JoinColumn(name = "JOB_PID", referencedColumnName = "PID", nullable = false, foreignKey = @ForeignKey(name = "FK_BLKEXCOL_JOB"))
 	private BulkExportJobEntity myJob;
 	@Column(name = "RES_TYPE", length = ResourceTable.RESTYPE_LEN, nullable = false)
 	private String myResourceType;
@@ -81,5 +82,9 @@ public class BulkExportCollectionEntity {
 			myFiles = new ArrayList<>();
 		}
 		return myFiles;
+	}
+
+	public Long getId() {
+		return myId;
 	}
 }

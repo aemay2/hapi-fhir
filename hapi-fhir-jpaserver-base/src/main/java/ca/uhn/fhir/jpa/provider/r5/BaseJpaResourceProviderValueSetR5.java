@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.provider.r5;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,10 @@ package ca.uhn.fhir.jpa.provider.r5;
  * #L%
  */
 
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoValueSet;
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoValueSet.ValidateCodeResult;
+import ca.uhn.fhir.context.support.IValidationSupport;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoValueSet;
 import ca.uhn.fhir.jpa.model.util.JpaConstants;
+import ca.uhn.fhir.jpa.provider.BaseJpaResourceProviderValueSetDstu2;
 import ca.uhn.fhir.rest.annotation.IdParam;
 import ca.uhn.fhir.rest.annotation.Operation;
 import ca.uhn.fhir.rest.annotation.OperationParam;
@@ -43,6 +44,7 @@ public class BaseJpaResourceProviderValueSetR5 extends JpaResourceProviderR5<Val
 		@IdParam(optional = true) IdType theId,
 		@OperationParam(name = "valueSet", min = 0, max = 1) ValueSet theValueSet,
 		@OperationParam(name = "url", min = 0, max = 1) UriType theUrl,
+		@OperationParam(name = "valueSetVersion", min = 0, max = 1) StringType theValueSetVersion,
 		@OperationParam(name = "filter", min = 0, max = 1) StringType theFilter,
 		@OperationParam(name = "offset", min = 0, max = 1) IntegerType theOffset,
 		@OperationParam(name = "count", min = 0, max = 1) IntegerType theCount,
@@ -51,6 +53,7 @@ public class BaseJpaResourceProviderValueSetR5 extends JpaResourceProviderR5<Val
 		boolean haveId = theId != null && theId.hasIdPart();
 		boolean haveIdentifier = theUrl != null && isNotBlank(theUrl.getValue());
 		boolean haveValueSet = theValueSet != null && !theValueSet.isEmpty();
+		boolean haveValueSetVersion = theValueSetVersion != null && !theValueSetVersion.isEmpty();
 
 		if (!haveId && !haveIdentifier && !haveValueSet) {
 			throw new InvalidRequestException("$expand operation at the type level (no ID specified) requires a url or a valueSet as a part of the request.");
@@ -90,7 +93,11 @@ public class BaseJpaResourceProviderValueSetR5 extends JpaResourceProviderR5<Val
 				if (haveId) {
 					return dao.expand(theId, toFilterString(theFilter), offset, count, theRequestDetails);
 				} else if (haveIdentifier) {
-					return dao.expandByIdentifier(theUrl.getValue(), toFilterString(theFilter), offset, count);
+					if (haveValueSetVersion) {
+						return dao.expandByIdentifier(theUrl.getValue() + "|" + theValueSetVersion.getValue(), toFilterString(theFilter), offset, count);
+					} else {
+						return dao.expandByIdentifier(theUrl.getValue(), toFilterString(theFilter), offset, count);
+					}
 				} else {
 					return dao.expand(theValueSet, toFilterString(theFilter), offset, count);
 				}
@@ -98,7 +105,11 @@ public class BaseJpaResourceProviderValueSetR5 extends JpaResourceProviderR5<Val
 				if (haveId) {
 					return dao.expand(theId, toFilterString(theFilter), theRequestDetails);
 				} else if (haveIdentifier) {
-					return dao.expandByIdentifier(theUrl.getValue(), toFilterString(theFilter));
+					if (haveValueSetVersion) {
+						return dao.expandByIdentifier(theUrl.getValue() + "|" + theValueSetVersion.getValue(), toFilterString(theFilter));
+					} else {
+						return dao.expandByIdentifier(theUrl.getValue(), toFilterString(theFilter));
+					}
 				} else {
 					return dao.expand(theValueSet, toFilterString(theFilter));
 				}
@@ -124,8 +135,10 @@ public class BaseJpaResourceProviderValueSetR5 extends JpaResourceProviderR5<Val
 		HttpServletRequest theServletRequest,
 		@IdParam(optional = true) IdType theId,
 		@OperationParam(name = "url", min = 0, max = 1) UriType theValueSetUrl,
+		@OperationParam(name = "valueSetVersion", min = 0, max = 1) StringType theValueSetVersion,
 		@OperationParam(name = "code", min = 0, max = 1) CodeType theCode,
 		@OperationParam(name = "system", min = 0, max = 1) UriType theSystem,
+		@OperationParam(name = "systemVersion", min = 0, max = 1) StringType theSystemVersion,
 		@OperationParam(name = "display", min = 0, max = 1) StringType theDisplay,
 		@OperationParam(name = "coding", min = 0, max = 1) Coding theCoding,
 		@OperationParam(name = "codeableConcept", min = 0, max = 1) CodeableConcept theCodeableConcept,
@@ -135,16 +148,20 @@ public class BaseJpaResourceProviderValueSetR5 extends JpaResourceProviderR5<Val
 		startRequest(theServletRequest);
 		try {
 			IFhirResourceDaoValueSet<ValueSet, Coding, CodeableConcept> dao = (IFhirResourceDaoValueSet<ValueSet, Coding, CodeableConcept>) getDao();
-			ValidateCodeResult result = dao.validateCode(theValueSetUrl, theId, theCode, theSystem, theDisplay, theCoding, theCodeableConcept, theRequestDetails);
-			Parameters retVal = new Parameters();
-			retVal.addParameter().setName("result").setValue(new BooleanType(result.isResult()));
-			if (isNotBlank(result.getMessage())) {
-				retVal.addParameter().setName("message").setValue(new StringType(result.getMessage()));
+			UriType valueSetIdentifier;
+			if (theValueSetVersion != null) {
+				valueSetIdentifier = new UriType(theValueSetUrl.getValue() + "|" + theValueSetVersion);
+			} else {
+				valueSetIdentifier = theValueSetUrl;
 			}
-			if (isNotBlank(result.getDisplay())) {
-				retVal.addParameter().setName("display").setValue(new StringType(result.getDisplay()));
+			UriType codeSystemIdentifier;
+			if (theSystemVersion != null) {
+				codeSystemIdentifier = new UriType(theSystem.getValue() + "|" + theSystemVersion);
+			} else {
+				codeSystemIdentifier = theSystem;
 			}
-			return retVal;
+			IValidationSupport.CodeValidationResult result = dao.validateCode(valueSetIdentifier, theId, theCode, codeSystemIdentifier, theDisplay, theCoding, theCodeableConcept, theRequestDetails);
+			return (Parameters) BaseJpaResourceProviderValueSetDstu2.toValidateCodeResult(getContext(), result);
 		} finally {
 			endRequest(theServletRequest);
 		}

@@ -25,17 +25,30 @@ import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.servlet.ServletHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
-import org.hl7.fhir.r4.model.*;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.hl7.fhir.r4.model.Bundle;
+import org.hl7.fhir.r4.model.DiagnosticReport;
+import org.hl7.fhir.r4.model.Observation;
+import org.hl7.fhir.r4.model.Organization;
+import org.hl7.fhir.r4.model.Patient;
+import org.hl7.fhir.r4.model.Practitioner;
+import org.hl7.fhir.r4.model.Reference;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class IncludeTest {
 
@@ -262,9 +275,21 @@ public class IncludeTest {
 		}
 	}
 
-	/**
-	 * Created by dsotnikov on 2/25/2014.
-	 */
+	@Test
+	public void testStringInclude() throws Exception {
+		HttpGet httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient?_query=stringInclude&_include=foo");
+		try (CloseableHttpResponse status = ourClient.execute(httpGet)) {
+			String responseContent = IOUtils.toString(status.getEntity().getContent());
+
+			assertEquals(200, status.getStatusLine().getStatusCode());
+			Bundle bundle = ourCtx.newXmlParser().parseResource(Bundle.class, responseContent);
+			assertEquals(1, bundle.getEntry().size());
+
+			Patient p = BundleUtil.toListOfResourcesOfType(ourCtx, bundle, Patient.class).get(0);
+			assertEquals("foo", p.getIdentifierFirstRep().getValue());
+		}
+	}
+
 	public static class DummyDiagnosticReportResourceProvider implements IResourceProvider {
 
 		@Override
@@ -392,6 +417,17 @@ public class IncludeTest {
 			return retVal;
 		}
 
+
+		@Search(queryName = "stringInclude")
+		public List<Patient> stringInclude(@IncludeParam String theInclude) {
+			Patient p = new Patient();
+			p.setId("p");
+			p.addIdentifier().setValue(theInclude);
+
+			return Arrays.asList(p);
+		}
+
+
 		@Override
 		public Class<Patient> getResourceType() {
 			return Patient.class;
@@ -440,13 +476,13 @@ public class IncludeTest {
 
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void afterClassClearContext() throws Exception {
 		JettyUtil.closeServer(ourServer);
 		TestUtil.clearAllStaticFieldsForUnitTest();
 	}
 
-	@BeforeClass
+	@BeforeAll
 	public static void beforeClass() throws Exception {
 
 		ourCtx = FhirContext.forR4();

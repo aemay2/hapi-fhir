@@ -1,18 +1,36 @@
 package ca.uhn.fhir.jpa.subscription.module.config;
 
-import ca.uhn.fhir.jpa.api.IDaoRegistry;
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.support.IValidationSupport;
+import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
 import ca.uhn.fhir.jpa.model.sched.ISchedulerService;
 import ca.uhn.fhir.jpa.searchparam.registry.ISearchParamProvider;
-import ca.uhn.fhir.jpa.subscription.module.cache.ISubscriptionProvider;
-import org.springframework.context.annotation.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 @Configuration
 @Import(TestSubscriptionConfig.class)
-public class TestSubscriptionDstu3Config extends SubscriptionDstu3Config {
+public class TestSubscriptionDstu3Config {
+	private static final Logger ourLog = LoggerFactory.getLogger(TestSubscriptionDstu3Config.class);
+
+	private static final FhirContext ourFhirContext = FhirContext.forDstu3();
+
+	@Bean
+	public FhirContext fhirContext() {
+		return ourFhirContext;
+	}
+
+	@Bean
+	public IValidationSupport validationSupport(FhirContext theFhirContext) {
+		return theFhirContext.getValidationSupport();
+	}
+
 	@Bean
 	@Primary
 	public ISearchParamProvider searchParamProvider() {
@@ -20,21 +38,13 @@ public class TestSubscriptionDstu3Config extends SubscriptionDstu3Config {
 	}
 
 	@Bean
-	@Primary
-	public ISubscriptionProvider subscriptionProvider() {
-		return new MockFhirClientSubscriptionProvider();
+	public ISchedulerService schedulerService() {
+		return mock(ISchedulerService.class);
 	}
 
 	@Bean
-	public IDaoRegistry daoRegistry() {
-		IDaoRegistry retVal = mock(IDaoRegistry.class);
-		when(retVal.isResourceTypeSupported(any())).thenReturn(true);
-		return retVal;
-	}
-	
-	@Bean
-	public ISchedulerService schedulerService() {
-		return mock(ISchedulerService.class);
+	public DaoRegistry daoRegistry() {
+		return new DaoRegistry();
 	}
 
 }

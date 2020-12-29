@@ -1,23 +1,38 @@
 package ca.uhn.fhir.jpa.dao.r4;
 
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
 import ca.uhn.fhir.jpa.model.entity.ResourceHistoryTable;
 import ca.uhn.fhir.jpa.model.entity.ResourceTable;
+import ca.uhn.fhir.rest.server.exceptions.PreconditionFailedException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceGoneException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceVersionConflictException;
 import ca.uhn.fhir.util.TestUtil;
 import org.hl7.fhir.instance.model.api.IIdType;
-import org.hl7.fhir.r4.model.*;
-import org.junit.AfterClass;
-import org.junit.Test;
+import org.hl7.fhir.r4.model.Bundle;
+import org.hl7.fhir.r4.model.IdType;
+import org.hl7.fhir.r4.model.Organization;
+import org.hl7.fhir.r4.model.Patient;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class FhirResourceDaoR4DeleteTest extends BaseJpaR4Test {
 	private static final Logger ourLog = LoggerFactory.getLogger(FhirResourceDaoR4DeleteTest.class);
+
+	@AfterEach
+	public void after() {
+		myDaoConfig.setDeleteEnabled(new DaoConfig().isDeleteEnabled());
+	}
 
 	@Test
 	public void testDeleteMarksResourceAndVersionAsDeleted() {
@@ -29,17 +44,19 @@ public class FhirResourceDaoR4DeleteTest extends BaseJpaR4Test {
 		myPatientDao.delete(id);
 
 		// Table should be marked as deleted
-		runInTransaction(()->{
+		runInTransaction(() -> {
 			ResourceTable resourceTable = myResourceTableDao.findById(id.getIdPartAsLong()).get();
 			assertNotNull(resourceTable.getDeleted());
+			assertTrue(resourceTable.isDeleted());
 		});
 
 		// Current version should be marked as deleted
-		runInTransaction(()->{
+		runInTransaction(() -> {
 			ResourceHistoryTable resourceTable = myResourceHistoryTableDao.findForIdAndVersionAndFetchProvenance(id.getIdPartAsLong(), 1);
 			assertNull(resourceTable.getDeleted());
+			assertNotNull(resourceTable.getPersistentId());
 		});
-		runInTransaction(()->{
+		runInTransaction(() -> {
 			ResourceHistoryTable resourceTable = myResourceHistoryTableDao.findForIdAndVersionAndFetchProvenance(id.getIdPartAsLong(), 2);
 			assertNotNull(resourceTable.getDeleted());
 		});
@@ -65,7 +82,24 @@ public class FhirResourceDaoR4DeleteTest extends BaseJpaR4Test {
 
 
 	@Test
-	public void testDeleteCircularReferenceInTransaction() throws IOException {
+	public void testDeleteDisabled() {
+		myDaoConfig.setDeleteEnabled(false);
+
+		Patient p = new Patient();
+		p.setActive(true);
+		IIdType pId = myPatientDao.create(p).getId().toUnqualifiedVersionless();
+
+		try {
+			myPatientDao.delete(pId);
+			fail();
+		} catch (PreconditionFailedException e) {
+			assertEquals("Resource deletion is not permitted on this server", e.getMessage());
+		}
+	}
+
+
+	@Test
+	public void testDeleteCircularReferenceInTransaction() {
 
 		// Create two resources with a circular reference
 		Organization org1 = new Organization();
@@ -155,14 +189,14 @@ public class FhirResourceDaoR4DeleteTest extends BaseJpaR4Test {
 		myPatientDao.delete(id);
 
 		// Table should be marked as deleted
-		runInTransaction(()->{
+		runInTransaction(() -> {
 			ResourceTable resourceTable = myResourceTableDao.findById(id.getIdPartAsLong()).get();
 			assertNotNull(resourceTable.getDeleted());
 		});
 
 		// Mark the current history version as not-deleted even though the actual resource
 		// table entry is marked deleted
-		runInTransaction(()->{
+		runInTransaction(() -> {
 			ResourceHistoryTable resourceTable = myResourceHistoryTableDao.findForIdAndVersionAndFetchProvenance(id.getIdPartAsLong(), 2);
 			resourceTable.setDeleted(null);
 			myResourceHistoryTableDao.save(resourceTable);
@@ -186,9 +220,13 @@ public class FhirResourceDaoR4DeleteTest extends BaseJpaR4Test {
 
 	}
 
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
+
+	@Test
+	public void testDeleteIgnoreReferentialIntegrityForPaths() {
+
+
+
 	}
+
 
 }

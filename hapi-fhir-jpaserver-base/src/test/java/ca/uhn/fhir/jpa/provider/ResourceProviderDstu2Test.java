@@ -12,13 +12,13 @@ import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
 import static org.hamcrest.Matchers.stringContainsInOrder;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -35,6 +35,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import ca.uhn.fhir.model.dstu2.resource.SearchParameter;
+import ca.uhn.fhir.model.dstu2.valueset.XPathUsageTypeEnum;
+import ca.uhn.fhir.model.primitive.IntegerDt;
+import ca.uhn.fhir.rest.gclient.NumberClientParam;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -46,28 +50,26 @@ import org.apache.http.client.methods.HttpPut;
 import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.entity.ContentType;
 import org.apache.http.entity.StringEntity;
-import org.hl7.fhir.instance.model.api.IBaseBundle;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 import org.springframework.test.util.AopTestUtils;
 
 import com.google.common.base.Charsets;
 
-import ca.uhn.fhir.jpa.dao.DaoConfig;
-import ca.uhn.fhir.jpa.search.SearchCoordinatorSvcImpl;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
 import ca.uhn.fhir.jpa.model.util.JpaConstants;
+import ca.uhn.fhir.jpa.search.SearchCoordinatorSvcImpl;
 import ca.uhn.fhir.model.api.ExtensionDt;
 import ca.uhn.fhir.model.api.IResource;
 import ca.uhn.fhir.model.api.ResourceMetadataKeyEnum;
 import ca.uhn.fhir.model.api.TemporalPrecisionEnum;
-import ca.uhn.fhir.model.dstu2.composite.CodingDt;
 import ca.uhn.fhir.model.dstu2.composite.MetaDt;
 import ca.uhn.fhir.model.dstu2.composite.PeriodDt;
+import ca.uhn.fhir.model.dstu2.composite.QuantityDt;
 import ca.uhn.fhir.model.dstu2.composite.ResourceReferenceDt;
 import ca.uhn.fhir.model.dstu2.resource.BaseResource;
 import ca.uhn.fhir.model.dstu2.resource.Basic;
@@ -92,11 +94,8 @@ import ca.uhn.fhir.model.dstu2.resource.Organization;
 import ca.uhn.fhir.model.dstu2.resource.Parameters;
 import ca.uhn.fhir.model.dstu2.resource.Patient;
 import ca.uhn.fhir.model.dstu2.resource.Practitioner;
-import ca.uhn.fhir.model.dstu2.resource.Questionnaire;
-import ca.uhn.fhir.model.dstu2.resource.QuestionnaireResponse;
 import ca.uhn.fhir.model.dstu2.resource.Subscription;
 import ca.uhn.fhir.model.dstu2.resource.ValueSet;
-import ca.uhn.fhir.model.dstu2.valueset.AnswerFormatEnum;
 import ca.uhn.fhir.model.dstu2.valueset.BundleTypeEnum;
 import ca.uhn.fhir.model.dstu2.valueset.EncounterClassEnum;
 import ca.uhn.fhir.model.dstu2.valueset.EncounterStateEnum;
@@ -128,7 +127,6 @@ import ca.uhn.fhir.rest.server.exceptions.ResourceGoneException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.util.BundleUtil;
 import ca.uhn.fhir.util.StopWatch;
-import ca.uhn.fhir.util.TestUtil;
 import ca.uhn.fhir.util.UrlUtil;
 
 public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
@@ -137,7 +135,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 	private SearchCoordinatorSvcImpl mySearchCoordinatorSvcRaw;
 
 	@Override
-	@After
+	@AfterEach
 	public void after() throws Exception {
 		super.after();
 
@@ -151,6 +149,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 
 	}
 
+	@BeforeEach
 	@Override
 	public void before() throws Exception {
 		super.before();
@@ -158,7 +157,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 		myDaoConfig.setAllowMultipleDelete(true);
 	}
 
-	@Before
+	@BeforeEach
 	public void beforeDisableResultReuse() {
 		myDaoConfig.setReuseCachedSearchResultsForMillis(null);
 		mySearchCoordinatorSvcRaw = AopTestUtils.getTargetObject(mySearchCoordinatorSvc);
@@ -170,6 +169,52 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 			assertEquals(200, resp.getStatusLine().getStatusCode());
 		}
 	}
+
+	/**
+	 * See #2023
+	 */
+	@Test
+	public void testCustomNumberSearchParam() {
+		SearchParameter numberParameter = new SearchParameter();
+		numberParameter.setId("future-appointment-count");
+		numberParameter.setName("Future Appointment Count");
+		numberParameter.setCode("future-appointment-count");
+		numberParameter.setDescription("Count of future appointments for the patient");
+		numberParameter.setUrl("http://integer");
+		numberParameter.setStatus(ca.uhn.fhir.model.dstu2.valueset.ConformanceResourceStatusEnum.ACTIVE);
+		numberParameter.setBase(ca.uhn.fhir.model.dstu2.valueset.ResourceTypeEnum.PATIENT);
+		numberParameter.setType(ca.uhn.fhir.model.dstu2.valueset.SearchParamTypeEnum.NUMBER);
+		numberParameter.setXpathUsage(XPathUsageTypeEnum.NORMAL);
+		numberParameter.setXpath("Patient.extension('http://integer')");
+		ourClient.update().resource(numberParameter).execute();
+
+		// This fires every 10 seconds
+		mySearchParamRegistry.refreshCacheIfNecessary();
+
+		Patient patient = new Patient();
+		patient.setId("future-appointment-count-pt");
+		patient.setActive(true);
+		patient.addUndeclaredExtension(false,  "http://integer", new IntegerDt(2));
+		ourClient.update().resource(patient).execute();
+
+		Bundle futureAppointmentCountBundle2 = ourClient
+			.search()
+			.forResource(Patient.class)
+			.where(new NumberClientParam("future-appointment-count").greaterThan().number(1))
+			.returnBundle(Bundle.class)
+			.execute();
+		assertEquals(futureAppointmentCountBundle2.getTotal().intValue(), 1);
+
+		Bundle futureAppointmentCountBundle3 = ourClient
+			.search()
+			.forResource(Patient.class)
+			.where(new NumberClientParam("future-appointment-count").exactly().number(2))
+			.returnBundle(Bundle.class)
+			.execute();
+		assertEquals(futureAppointmentCountBundle3.getTotal().intValue(), 1);
+
+	}
+
 
 	/**
 	 * See #484
@@ -363,38 +408,6 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 		fromDB = ourClient.read().resource(Binary.class).withId(resource.toVersionless()).execute();
 		assertEquals("3", fromDB.getId().getVersionIdPart());
 
-	}
-
-	@Test
-	public void testCreateQuestionnaireResponseWithValidation() {
-		ValueSet options = new ValueSet();
-		options.getCodeSystem().setSystem("urn:system").addConcept().setCode("code0");
-		IIdType optId = ourClient.create().resource(options).execute().getId();
-
-		Questionnaire q = new Questionnaire();
-		q.getGroup().addQuestion().setLinkId("link0").setRequired(false).setType(AnswerFormatEnum.CHOICE).setOptions(new ResourceReferenceDt(optId));
-		IIdType qId = ourClient.create().resource(q).execute().getId();
-
-		QuestionnaireResponse qa;
-
-		// Good code
-
-		qa = new QuestionnaireResponse();
-		qa.getQuestionnaire().setReference(qId.toUnqualifiedVersionless().getValue());
-		qa.getGroup().addQuestion().setLinkId("link0").addAnswer().setValue(new CodingDt().setSystem("urn:system").setCode("code0"));
-		ourClient.create().resource(qa).execute();
-
-		// Bad code
-
-		qa = new QuestionnaireResponse();
-		qa.getQuestionnaire().setReference(qId.toUnqualifiedVersionless().getValue());
-		qa.getGroup().addQuestion().setLinkId("link0").addAnswer().setValue(new CodingDt().setSystem("urn:system").setCode("code1"));
-		try {
-			ourClient.create().resource(qa).execute();
-			fail();
-		} catch (UnprocessableEntityException e) {
-			assertThat(e.getMessage(), containsString("Question with linkId[link0]"));
-		}
 	}
 
 	@Test
@@ -1103,7 +1116,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 			}
 			ourLog.info("$everything: " + ids.toString());
 
-			assertFalse(ids.toString(), dupes);
+			assertFalse(dupes, ids.toString());
 		}
 
 		/*
@@ -1124,7 +1137,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 			}
 			ourLog.info("$everything: " + ids.toString());
 
-			assertFalse(ids.toString(), dupes);
+			assertFalse(dupes, ids.toString());
 			assertThat(ids.toString(), containsString("Condition"));
 			assertThat(ids.size(), greaterThan(10));
 		}
@@ -1390,7 +1403,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 			.returnBundle(Bundle.class)
 			.execute();
 
-		assertEquals("nothing matches profile x", Collections.emptyList(), actual.getEntry());
+		assertEquals(Collections.emptyList(), actual.getEntry(), "nothing matches profile x");
 
 		actual = ourClient.search()
 			.forResource(Organization.class)
@@ -1407,7 +1420,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 		for (Entry ele : actual.getEntry()) {
 			actualIds.add(ele.getResource().getId().getIdPart());
 		}
-		assertEquals("Expects to retrieve the 1 orgination matching on Org1's profiles", expectedIds, actualIds);
+		assertEquals(expectedIds, actualIds, "Expects to retrieve the 1 orgination matching on Org1's profiles");
 
 		actual = ourClient.search()
 			.forResource(Organization.class)
@@ -1425,7 +1438,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 		for (Entry ele : actual.getEntry()) {
 			actualIds.add(ele.getResource().getId().getIdPart());
 		}
-		assertEquals("Expects to retrieve the 2 orginations, since we match on (the common profile AND (Org1's second profile OR org2's second profile))", expectedIds, actualIds);
+		assertEquals(expectedIds, actualIds, "Expects to retrieve the 2 orginations, since we match on (the common profile AND (Org1's second profile OR org2's second profile))");
 	}
 
 	@Test
@@ -1618,7 +1631,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 
 		assertEquals(10, response.getEntry().size());
 		if (ourConnectionPoolSize > 1) {
-			assertEquals("Total should be null but was " + response.getTotalElement().getValueAsString() + " in " + sw.toString(), null, response.getTotalElement().getValueAsString());
+			assertEquals(null, response.getTotalElement().getValueAsString(), "Total should be null but was " + response.getTotalElement().getValueAsString() + " in " + sw.toString());
 		}
 		assertThat(response.getLink("next").getUrl(), not(emptyString()));
 
@@ -1677,7 +1690,19 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 			.useHttpGet()
 			.execute();
 
-		assertEquals(21, response.getEntry().size());
+		assertEquals(10, response.getEntry().size());
+		assertEquals(null, response.getTotalElement().getValue());
+		assertThat(response.getLink("next").getUrl(), not(emptyString()));
+
+		response = ourClient.fetchResourceFromUrl(ca.uhn.fhir.model.dstu2.resource.Bundle.class, response.getLink("next").getUrl());
+
+		assertEquals(10, response.getEntry().size());
+		assertEquals(null, response.getTotalElement().getValue());
+		assertThat(response.getLink("next").getUrl(), not(emptyString()));
+
+		response = ourClient.fetchResourceFromUrl(ca.uhn.fhir.model.dstu2.resource.Bundle.class, response.getLink("next").getUrl());
+
+		assertEquals(1, response.getEntry().size());
 		assertEquals(21, response.getTotalElement().getValue().intValue());
 		assertEquals(null, response.getLink("next"));
 
@@ -1926,7 +1951,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 		for (Entry ele : actual.getEntry()) {
 			actualIds.add(ele.getResource().getId().getIdPart());
 		}
-		assertEquals("Expects to retrieve the 2 patients which reference the two different organizations", expectedIds, actualIds);
+		assertEquals(expectedIds, actualIds, "Expects to retrieve the 2 patients which reference the two different organizations");
 	}
 
 	@Test
@@ -2154,19 +2179,87 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 		assertEquals(SearchEntryModeEnum.INCLUDE, found.getEntry().get(1).getSearch().getModeElement().getValueAsEnum());
 	}
 
-	@Test(expected = InvalidRequestException.class)
-	public void testSearchWithInvalidSort() {
-		Observation o = new Observation();
-		o.getCode().setText("testSearchWithInvalidSort");
-		myObservationDao.create(o, mySrd);
-		IBaseBundle bundle = ourClient
-			.search()
-			.forResource(Observation.class)
-			.sort().ascending(Observation.CODE_VALUE_QUANTITY) // composite sort not supported yet
-			.prettyPrint()
-			.execute();
+	@Test
+	public void testSearchWithCompositeSortWith_CodeValueQuantity() throws IOException {
+		
+		IIdType pid0;
+		IIdType oid1;
+		IIdType oid2;
+		IIdType oid3;
+		IIdType oid4;
+		{
+			Patient patient = new Patient();
+			patient.addIdentifier().setSystem("urn:system").setValue("001");
+			patient.addName().addFamily("Tester").addGiven("Joe");
+			pid0 = myPatientDao.create(patient, mySrd).getId().toUnqualifiedVersionless();
+		}
+		{
+			Observation obs = new Observation();
+			obs.addIdentifier().setSystem("urn:system").setValue("FOO");
+			obs.getSubject().setReference(pid0);
+			obs.getCode().addCoding().setCode("2345-7").setSystem("http://loinc.org");
+			obs.setValue(new QuantityDt().setValue(200));
+			
+			oid1 = myObservationDao.create(obs, mySrd).getId().toUnqualifiedVersionless();
+			
+			ourLog.info("Observation: \n" + myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(obs));
+		}
+		
+		{
+			Observation obs = new Observation();
+			obs.addIdentifier().setSystem("urn:system").setValue("FOO");
+			obs.getSubject().setReference(pid0);
+			obs.getCode().addCoding().setCode("2345-7").setSystem("http://loinc.org");
+			obs.setValue(new QuantityDt().setValue(300));
+			
+			oid2 = myObservationDao.create(obs, mySrd).getId().toUnqualifiedVersionless();
+			
+			ourLog.info("Observation: \n" + myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(obs));
+		}
+		
+		{
+			Observation obs = new Observation();
+			obs.addIdentifier().setSystem("urn:system").setValue("FOO");
+			obs.getSubject().setReference(pid0);
+			obs.getCode().addCoding().setCode("2345-7").setSystem("http://loinc.org");
+			obs.setValue(new QuantityDt().setValue(150));
+			
+			oid3 = myObservationDao.create(obs, mySrd).getId().toUnqualifiedVersionless();
+			
+			ourLog.info("Observation: \n" + myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(obs));
+		}
+		
+		{
+			Observation obs = new Observation();
+			obs.addIdentifier().setSystem("urn:system").setValue("FOO");
+			obs.getSubject().setReference(pid0);
+			obs.getCode().addCoding().setCode("2345-7").setSystem("http://loinc.org");
+			obs.setValue(new QuantityDt().setValue(250));
+			
+			oid4 = myObservationDao.create(obs, mySrd).getId().toUnqualifiedVersionless();
+			
+			ourLog.info("Observation: \n" + myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(obs));
+		}
+		
+		String uri = ourServerBase + "/Observation?_sort=code-value-quantity";
+		Bundle found;
+		
+		HttpGet get = new HttpGet(uri);
+		try (CloseableHttpResponse resp = ourHttpClient.execute(get)) {
+			String output = IOUtils.toString(resp.getEntity().getContent(), Charsets.UTF_8);
+			found = myFhirCtx.newXmlParser().parseResource(Bundle.class, output);
+		}
+		
+		ourLog.info("Bundle: \n" + myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(found));
+		
+		List<IIdType> list = toUnqualifiedVersionlessIds(found);
+		assertEquals(4, found.getEntry().size());
+		assertEquals(oid3, list.get(0));
+		assertEquals(oid1, list.get(1));
+		assertEquals(oid4, list.get(2));
+		assertEquals(oid2, list.get(3));
 	}
-
+	
 	@Test
 	public void testSearchWithMissing() {
 		ourLog.info("Starting testSearchWithMissing");
@@ -2182,7 +2275,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 		IdDt deletedIdMissingFalse = (IdDt) ourClient.create().resource(org).execute().getId().toUnqualifiedVersionless();
 		ourClient.delete().resourceById(deletedIdMissingFalse).execute();
 
-		List<IResource> resources = new ArrayList<IResource>();
+		List<IResource> resources = new ArrayList<>();
 		for (int i = 0; i < 20; i++) {
 			org = new Organization();
 			org.setName(methodName + "_0" + i);
@@ -2669,7 +2762,7 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 	 * From example from david hay - moved to the hl7org_dstu2 project
 	 */
 	@Test
-	@Ignore
+	@Disabled
 	public void testValidateDavidsAllergyIntolerance() throws Exception {
 		myDaoConfig.setAllowExternalReferences(true);
 
@@ -2745,7 +2838,6 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 			String responseString = IOUtils.toString(response.getEntity().getContent(), StandardCharsets.UTF_8);
 			ourLog.info("Response: {}", responseString);
 			assertThat(responseString, not(containsString("Resource has no id")));
-			assertEquals(200, response.getStatusLine().getStatusCode());
 		} finally {
 			IOUtils.closeQuietly(response);
 		}
@@ -2932,9 +3024,5 @@ public class ResourceProviderDstu2Test extends BaseResourceProviderDstu2Test {
 
 	}
 
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
-	}
 
 }

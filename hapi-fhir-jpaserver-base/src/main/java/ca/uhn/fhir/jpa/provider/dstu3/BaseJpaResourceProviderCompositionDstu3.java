@@ -1,6 +1,6 @@
 package ca.uhn.fhir.jpa.provider.dstu3;
 
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoComposition;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoComposition;
 import ca.uhn.fhir.jpa.model.util.JpaConstants;
 import ca.uhn.fhir.model.api.annotation.Description;
 import ca.uhn.fhir.model.valueset.BundleTypeEnum;
@@ -13,7 +13,11 @@ import ca.uhn.fhir.rest.api.SortSpec;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.param.DateRangeParam;
-import org.hl7.fhir.dstu3.model.*;
+import org.hl7.fhir.dstu3.model.Bundle;
+import org.hl7.fhir.dstu3.model.Composition;
+import org.hl7.fhir.dstu3.model.IdType;
+import org.hl7.fhir.dstu3.model.Resource;
+import org.hl7.fhir.dstu3.model.UnsignedIntType;
 import org.hl7.fhir.instance.model.api.IBaseBundle;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 
@@ -23,7 +27,7 @@ import java.util.List;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,6 +62,10 @@ public class BaseJpaResourceProviderCompositionDstu3 extends JpaResourceProvider
 			@Description(formalDefinition="Results from this method are returned across multiple pages. This parameter controls the size of those pages.") 
 			@OperationParam(name = Constants.PARAM_COUNT) 
 			UnsignedIntType theCount,
+
+			@Description(formalDefinition="Results from this method are returned across multiple pages. This parameter controls the offset when fetching a page.")
+			@OperationParam(name = Constants.PARAM_OFFSET)
+			UnsignedIntType theOffset,
 			
 			@Description(shortDefinition="Only return resources which were last updated as specified by the given range")
 			@OperationParam(name = Constants.PARAM_LASTUPDATED, min=0, max=1) 
@@ -72,7 +80,7 @@ public class BaseJpaResourceProviderCompositionDstu3 extends JpaResourceProvider
 
 		startRequest(theServletRequest);
 		try {
-			IBundleProvider bundleProvider = ((IFhirResourceDaoComposition<Composition>) getDao()).getDocumentForComposition(theServletRequest, theId, theCount, theLastUpdated, theSortSpec, theRequestDetails);
+			IBundleProvider bundleProvider = ((IFhirResourceDaoComposition<Composition>) getDao()).getDocumentForComposition(theServletRequest, theId, theCount, theOffset, theLastUpdated, theSortSpec, theRequestDetails);
 			List<IBaseResource> resourceList = bundleProvider.getResources(0, bundleProvider.size());
 
 			boolean foundCompositionResource = false;

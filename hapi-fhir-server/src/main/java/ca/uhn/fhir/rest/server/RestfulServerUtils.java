@@ -4,7 +4,7 @@ package ca.uhn.fhir.rest.server;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,13 +22,22 @@ package ca.uhn.fhir.rest.server;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.FhirVersionEnum;
+import ca.uhn.fhir.interceptor.api.HookParams;
+import ca.uhn.fhir.interceptor.api.Pointcut;
 import ca.uhn.fhir.model.api.IResource;
 import ca.uhn.fhir.model.api.Include;
 import ca.uhn.fhir.model.api.ResourceMetadataKeyEnum;
 import ca.uhn.fhir.model.primitive.InstantDt;
 import ca.uhn.fhir.model.valueset.BundleTypeEnum;
 import ca.uhn.fhir.parser.IParser;
-import ca.uhn.fhir.rest.api.*;
+import ca.uhn.fhir.rest.api.Constants;
+import ca.uhn.fhir.rest.api.DeleteCascadeModeEnum;
+import ca.uhn.fhir.rest.api.EncodingEnum;
+import ca.uhn.fhir.rest.api.PreferHeader;
+import ca.uhn.fhir.rest.api.PreferReturnEnum;
+import ca.uhn.fhir.rest.api.RequestTypeEnum;
+import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
+import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.rest.api.server.IRestfulResponse;
 import ca.uhn.fhir.rest.api.server.IRestfulServer;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
@@ -36,12 +45,22 @@ import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import ca.uhn.fhir.rest.server.method.ElementsParameter;
 import ca.uhn.fhir.rest.server.method.SummaryEnumParameter;
+import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
 import ca.uhn.fhir.util.BinaryUtil;
 import ca.uhn.fhir.util.DateUtils;
 import ca.uhn.fhir.util.UrlUtil;
-import org.hl7.fhir.instance.model.api.*;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
+import org.hl7.fhir.instance.model.api.IAnyResource;
+import org.hl7.fhir.instance.model.api.IBaseBinary;
+import org.hl7.fhir.instance.model.api.IBaseReference;
+import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.instance.model.api.IDomainResource;
+import org.hl7.fhir.instance.model.api.IIdType;
+import org.hl7.fhir.instance.model.api.IPrimitiveType;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.io.Writer;
@@ -50,7 +69,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static org.apache.commons.lang3.StringUtils.*;
+import static org.apache.commons.lang3.StringUtils.isBlank;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
+import static org.apache.commons.lang3.StringUtils.replace;
+import static org.apache.commons.lang3.StringUtils.trim;
 
 public class RestfulServerUtils {
 	static final Pattern ACCEPT_HEADER_PATTERN = Pattern.compile("\\s*([a-zA-Z0-9+.*/-]+)\\s*(;\\s*([a-zA-Z]+)\\s*=\\s*([a-zA-Z0-9.]+)\\s*)?(,?)");
@@ -58,7 +80,8 @@ public class RestfulServerUtils {
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(RestfulServerUtils.class);
 
 	private static final HashSet<String> TEXT_ENCODE_ELEMENTS = new HashSet<>(Arrays.asList("*.text", "*.id", "*.meta", "*.(mandatory)"));
-	private static Map<FhirVersionEnum, FhirContext> myFhirContextMap = Collections.synchronizedMap(new HashMap<FhirVersionEnum, FhirContext>());
+	private static Map<FhirVersionEnum, FhirContext> myFhirContextMap = Collections.synchronizedMap(new HashMap<>());
+	private static EnumSet<RestOperationTypeEnum> ourOperationsWhichAllowPreferHeader = EnumSet.of(RestOperationTypeEnum.CREATE, RestOperationTypeEnum.UPDATE, RestOperationTypeEnum.PATCH);
 
 	private enum NarrativeModeEnum {
 		NORMAL, ONLY, SUPPRESS;
@@ -129,7 +152,7 @@ public class RestfulServerUtils {
 
 		// _elements
 		Set<String> elements = ElementsParameter.getElementsValueOrNull(theRequestDetails, false);
-		if (elements != null && summaryMode != null && !summaryMode.equals(Collections.singleton(SummaryEnum.FALSE))) {
+		if (elements != null && !summaryMode.equals(Collections.singleton(SummaryEnum.FALSE))) {
 			throw new InvalidRequestException("Cannot combine the " + Constants.PARAM_SUMMARY + " and " + Constants.PARAM_ELEMENTS + " parameters");
 		}
 
@@ -139,17 +162,24 @@ public class RestfulServerUtils {
 			parser.setDontEncodeElements(elementsExclude);
 		}
 
-		if (summaryMode != null) {
-			if (summaryMode.contains(SummaryEnum.COUNT) && summaryMode.size() == 1) {
-				parser.setEncodeElements(Collections.singleton("Bundle.total"));
-			} else if (summaryMode.contains(SummaryEnum.TEXT) && summaryMode.size() == 1) {
-				parser.setEncodeElements(TEXT_ENCODE_ELEMENTS);
-				parser.setEncodeElementsAppliesToChildResourcesOnly(true);
-			} else {
-				parser.setSuppressNarratives(summaryMode.contains(SummaryEnum.DATA));
-				parser.setSummaryMode(summaryMode.contains(SummaryEnum.TRUE));
+		boolean summaryModeCount = summaryMode.contains(SummaryEnum.COUNT) && summaryMode.size() == 1;
+		if (!summaryModeCount) {
+			String[] countParam = theRequestDetails.getParameters().get(Constants.PARAM_COUNT);
+			if (countParam != null && countParam.length > 0) {
+				summaryModeCount = "0".equalsIgnoreCase(countParam[0]);
 			}
 		}
+
+		if (summaryModeCount) {
+			parser.setEncodeElements(Sets.newHashSet("Bundle.total", "Bundle.type"));
+		} else if (summaryMode.contains(SummaryEnum.TEXT) && summaryMode.size() == 1) {
+			parser.setEncodeElements(TEXT_ENCODE_ELEMENTS);
+			parser.setEncodeElementsAppliesToChildResourcesOnly(true);
+		} else {
+			parser.setSuppressNarratives(summaryMode.contains(SummaryEnum.DATA));
+			parser.setSummaryMode(summaryMode.contains(SummaryEnum.TRUE));
+		}
+
 		if (elements != null && elements.size() > 0) {
 			String elementsAppliesTo = "*";
 			if (isNotBlank(theRequestDetails.getResourceName())) {
@@ -202,6 +232,76 @@ public class RestfulServerUtils {
 
 			parser.setEncodeElements(newElements);
 		}
+	}
+
+
+	public static String createLinkSelf(String theServerBase, RequestDetails theRequest) {
+		StringBuilder b = new StringBuilder();
+		b.append(theServerBase);
+
+		if (isNotBlank(theRequest.getRequestPath())) {
+			b.append('/');
+			if (isNotBlank(theRequest.getTenantId()) && theRequest.getRequestPath().startsWith(theRequest.getTenantId() + "/")) {
+				b.append(theRequest.getRequestPath().substring(theRequest.getTenantId().length() + 1));
+			} else {
+				b.append(theRequest.getRequestPath());
+			}
+		}
+		// For POST the URL parameters get jumbled with the post body parameters so don't include them, they might be huge
+		if (theRequest.getRequestType() == RequestTypeEnum.GET) {
+			boolean first = true;
+			Map<String, String[]> parameters = theRequest.getParameters();
+			for (String nextParamName : new TreeSet<>(parameters.keySet())) {
+				for (String nextParamValue : parameters.get(nextParamName)) {
+					if (first) {
+						b.append('?');
+						first = false;
+					} else {
+						b.append('&');
+					}
+					b.append(UrlUtil.escapeUrlParam(nextParamName));
+					b.append('=');
+					b.append(UrlUtil.escapeUrlParam(nextParamValue));
+				}
+			}
+		}
+
+		return b.toString();
+	}
+
+	public static String createOffsetPagingLink(String theServerBase, String requestPath, String tenantId, Integer theOffset, Integer theCount, Map<String, String[]> theRequestParameters) {
+		StringBuilder b = new StringBuilder();
+		b.append(theServerBase);
+
+		if (isNotBlank(requestPath)) {
+			b.append('/');
+			if (isNotBlank(tenantId) && requestPath.startsWith(tenantId + "/")) {
+				b.append(requestPath.substring(tenantId.length() + 1));
+			} else {
+				b.append(requestPath);
+			}
+		}
+
+		Map<String, String[]> params = Maps.newLinkedHashMap(theRequestParameters);
+		params.put(Constants.PARAM_OFFSET, new String[]{String.valueOf(theOffset)});
+		params.put(Constants.PARAM_COUNT, new String[]{String.valueOf(theCount)});
+
+		boolean first = true;
+		for (String nextParamName : new TreeSet<>(params.keySet())) {
+			for (String nextParamValue : params.get(nextParamName)) {
+				if (first) {
+					b.append('?');
+					first = false;
+				} else {
+					b.append('&');
+				}
+				b.append(UrlUtil.escapeUrlParam(nextParamName));
+				b.append('=');
+				b.append(UrlUtil.escapeUrlParam(nextParamValue));
+			}
+		}
+
+		return b.toString();
 	}
 
 	public static String createPagingLink(Set<Include> theIncludes, RequestDetails theRequestDetails, String theSearchId, int theOffset, int theCount, Map<String, String[]> theRequestParameters, boolean thePrettyPrint,
@@ -313,26 +413,21 @@ public class RestfulServerUtils {
 		return b.toString();
 	}
 
-	/**
-	 * @TODO: this method is only called from one place and should be removed anyway
-	 */
-	public static EncodingEnum determineRequestEncoding(RequestDetails theReq) {
-		EncodingEnum retVal = determineRequestEncodingNoDefault(theReq);
-		if (retVal != null) {
-			return retVal;
-		}
-		return EncodingEnum.XML;
+	@Nullable
+	public static EncodingEnum determineRequestEncodingNoDefault(RequestDetails theReq) {
+		return determineRequestEncodingNoDefault(theReq, false);
 	}
 
-	public static EncodingEnum determineRequestEncodingNoDefault(RequestDetails theReq) {
-		ResponseEncoding retVal = determineRequestEncodingNoDefaultReturnRE(theReq);
+	@Nullable
+	public static EncodingEnum determineRequestEncodingNoDefault(RequestDetails theReq, boolean theStrict) {
+		ResponseEncoding retVal = determineRequestEncodingNoDefaultReturnRE(theReq, theStrict);
 		if (retVal == null) {
 			return null;
 		}
 		return retVal.getEncoding();
 	}
 
-	private static ResponseEncoding determineRequestEncodingNoDefaultReturnRE(RequestDetails theReq) {
+	private static ResponseEncoding determineRequestEncodingNoDefaultReturnRE(RequestDetails theReq, boolean theStrict) {
 		ResponseEncoding retVal = null;
 		List<String> headers = theReq.getHeaders(Constants.HEADER_CONTENT_TYPE);
 		if (headers != null) {
@@ -350,7 +445,12 @@ public class RestfulServerUtils {
 								nextPart = nextPart.substring(0, scIdx);
 							}
 							nextPart = nextPart.trim();
-							EncodingEnum encoding = EncodingEnum.forContentType(nextPart);
+							EncodingEnum encoding;
+							if (theStrict) {
+								encoding = EncodingEnum.forContentTypeStrict(nextPart);
+							} else {
+								encoding = EncodingEnum.forContentType(nextPart);
+							}
 							if (encoding != null) {
 								retVal = new ResponseEncoding(theReq.getServer().getFhirContext(), encoding, nextPart);
 								break;
@@ -484,7 +584,7 @@ public class RestfulServerUtils {
 		 * has a Content-Type header but not an Accept header)
 		 */
 		if (retVal == null) {
-			retVal = determineRequestEncodingNoDefaultReturnRE(theReq);
+			retVal = determineRequestEncodingNoDefaultReturnRE(theReq, strict);
 		}
 
 		return retVal;
@@ -502,6 +602,7 @@ public class RestfulServerUtils {
 		return retVal;
 	}
 
+	@Nonnull
 	public static Set<SummaryEnum> determineSummaryMode(RequestDetails theRequest) {
 		Map<String, String[]> requestParams = theRequest.getParameters();
 
@@ -543,6 +644,10 @@ public class RestfulServerUtils {
 		return RestfulServerUtils.tryToExtractNamedParameter(theRequest, Constants.PARAM_COUNT);
 	}
 
+	public static Integer extractOffsetParameter(RequestDetails theRequest) {
+		return RestfulServerUtils.tryToExtractNamedParameter(theRequest, Constants.PARAM_OFFSET);
+	}
+
 	public static IPrimitiveType<Date> extractLastUpdatedFromResource(IBaseResource theResource) {
 		IPrimitiveType<Date> lastUpdated = null;
 		if (theResource instanceof IResource) {
@@ -560,7 +665,7 @@ public class RestfulServerUtils {
 			if (theResource != null && isBlank(resName)) {
 				FhirContext context = theServer.getFhirContext();
 				context = getContextForVersion(context, theResource.getStructureFhirVersionEnum());
-				resName = context.getResourceDefinition(theResource).getName();
+				resName = context.getResourceType(theResource);
 			}
 			if (isNotBlank(resName)) {
 				retVal = theResourceId.withServerBase(theServerBase, resName);
@@ -608,6 +713,9 @@ public class RestfulServerUtils {
 		switch (responseEncoding) {
 			case JSON:
 				parser = context.newJsonParser();
+				break;
+			case RDF:
+				parser = context.newRDFParser();
 				break;
 			case XML:
 			default:
@@ -669,59 +777,55 @@ public class RestfulServerUtils {
 		return retVal;
 	}
 
-	private static EnumSet<RestOperationTypeEnum> ourOperationsWhichAllowPreferHeader = EnumSet.of(RestOperationTypeEnum.CREATE, RestOperationTypeEnum.UPDATE, RestOperationTypeEnum.PATCH);
-
 	public static boolean respectPreferHeader(RestOperationTypeEnum theRestOperationType) {
 		return ourOperationsWhichAllowPreferHeader.contains(theRestOperationType);
 	}
 
 	@Nonnull
-    public static PreferHeader parsePreferHeader(IRestfulServer<?> theServer, String theValue) {
-        PreferHeader retVal = new PreferHeader();
-        
-        if (isNotBlank(theValue)) {
-            StringTokenizer tok = new StringTokenizer(theValue, ";");
-            while (tok.hasMoreTokens()) {
-                String next = trim(tok.nextToken());
-                int eqIndex = next.indexOf('=');
-                
-                String key;
-                String value;
-                if (eqIndex == -1 || eqIndex >= next.length() - 2) {
-                    key = next;
-                    value = "";
-                } else {
-                    key = next.substring(0, eqIndex).trim();
-                    value = next.substring(eqIndex + 1).trim();
-                }
-                
-                if (key.equals(Constants.HEADER_PREFER_RETURN)) {
-                    
-                    if (value.length() < 2) {
-                        continue;
-                    }
-                    if ('"' == value.charAt(0) && '"' == value.charAt(value.length() - 1)) {
-                        value = value.substring(1, value.length() - 1);
-                    }
-                    
-                    retVal.setReturn(PreferReturnEnum.fromHeaderValue(value));
-                    
-                } else if (key.equals(Constants.HEADER_PREFER_RESPOND_ASYNC)) {
-                    
-                    retVal.setRespondAsync(true);
-                    
-                }
-            }
-        }
+	public static PreferHeader parsePreferHeader(IRestfulServer<?> theServer, String theValue) {
+		PreferHeader retVal = new PreferHeader();
+
+		if (isNotBlank(theValue)) {
+			StringTokenizer tok = new StringTokenizer(theValue, ";");
+			while (tok.hasMoreTokens()) {
+				String next = trim(tok.nextToken());
+				int eqIndex = next.indexOf('=');
+
+				String key;
+				String value;
+				if (eqIndex == -1 || eqIndex >= next.length() - 2) {
+					key = next;
+					value = "";
+				} else {
+					key = next.substring(0, eqIndex).trim();
+					value = next.substring(eqIndex + 1).trim();
+				}
+
+				if (key.equals(Constants.HEADER_PREFER_RETURN)) {
+
+					if (value.length() < 2) {
+						continue;
+					}
+					if ('"' == value.charAt(0) && '"' == value.charAt(value.length() - 1)) {
+						value = value.substring(1, value.length() - 1);
+					}
+
+					retVal.setReturn(PreferReturnEnum.fromHeaderValue(value));
+
+				} else if (key.equals(Constants.HEADER_PREFER_RESPOND_ASYNC)) {
+
+					retVal.setRespondAsync(true);
+
+				}
+			}
+		}
 
 		if (retVal.getReturn() == null && theServer != null && theServer.getDefaultPreferReturn() != null) {
 			retVal.setReturn(theServer.getDefaultPreferReturn());
 		}
 
 		return retVal;
-    }
-    
-    
+	}
 
 
 	public static boolean prettyPrintResponse(IRestfulServerDefaults theServer, RequestDetails theRequest) {
@@ -836,7 +940,7 @@ public class RestfulServerUtils {
 			 * parts, we're not streaming just the narrative as HTML (since bundles don't even
 			 * have one)
 			 */
-			if ("Bundle".equals(theServer.getFhirContext().getResourceDefinition(theResource).getName())) {
+			if ("Bundle".equals(theServer.getFhirContext().getResourceType(theResource))) {
 				encodingDomainResourceAsText = false;
 			}
 		}
@@ -869,6 +973,19 @@ public class RestfulServerUtils {
 		String charset = Constants.CHARSET_NAME_UTF8;
 
 		Writer writer = response.getResponseWriter(theStatusCode, theStatusMessage, contentType, charset, respondGzip);
+
+		// Interceptor call: SERVER_OUTGOING_WRITER_CREATED
+		if (theServer.getInterceptorService() != null && theServer.getInterceptorService().hasHooks(Pointcut.SERVER_OUTGOING_WRITER_CREATED)) {
+			HookParams params = new HookParams()
+				.add(Writer.class, writer)
+				.add(RequestDetails.class, theRequestDetails)
+				.addIfMatchesType(ServletRequestDetails.class, theRequestDetails);
+			Object newWriter = theServer.getInterceptorService().callHooksAndReturnObject(Pointcut.SERVER_OUTGOING_WRITER_CREATED, params);
+			if (newWriter != null) {
+				writer = (Writer) newWriter;
+			}
+		}
+
 		if (theResource == null) {
 			// No response is being returned
 		} else if (encodingDomainResourceAsText && theResource instanceof IResource) {
@@ -886,22 +1003,9 @@ public class RestfulServerUtils {
 			IParser parser = getNewParser(theServer.getFhirContext(), forVersion, theRequestDetails);
 			parser.encodeResourceToWriter(theResource, writer);
 		}
-		//FIXME resource leak
+
 		return response.sendWriterResponse(theStatusCode, contentType, charset, writer);
 	}
-
-	// static Integer tryToExtractNamedParameter(HttpServletRequest theRequest, String name) {
-	// String countString = theRequest.getParameter(name);
-	// Integer count = null;
-	// if (isNotBlank(countString)) {
-	// try {
-	// count = Integer.parseInt(countString);
-	// } catch (NumberFormatException e) {
-	// ourLog.debug("Failed to parse _count value '{}': {}", countString, e);
-	// }
-	// }
-	// return count;
-	// }
 
 	public static String createEtag(String theVersionId) {
 		return "W/\"" + theVersionId + '"';
@@ -927,5 +1031,22 @@ public class RestfulServerUtils {
 	}
 
 
+	/**
+	 * @since 5.0.0
+	 */
+	public static DeleteCascadeModeEnum extractDeleteCascadeParameter(RequestDetails theRequest) {
+		if (theRequest != null) {
+			String[] cascadeParameters = theRequest.getParameters().get(Constants.PARAMETER_CASCADE_DELETE);
+			if (cascadeParameters != null && Arrays.asList(cascadeParameters).contains(Constants.CASCADE_DELETE)) {
+				return DeleteCascadeModeEnum.DELETE;
+			}
 
+			String cascadeHeader = theRequest.getHeader(Constants.HEADER_CASCADE);
+			if (Constants.CASCADE_DELETE.equals(cascadeHeader)) {
+				return DeleteCascadeModeEnum.DELETE;
+			}
+		}
+
+		return DeleteCascadeModeEnum.NONE;
+	}
 }

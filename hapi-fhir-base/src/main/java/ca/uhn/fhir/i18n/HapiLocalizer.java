@@ -14,7 +14,7 @@ import static org.apache.commons.lang3.StringUtils.*;
  * #%L
  * HAPI FHIR - Core Library
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,17 +40,16 @@ public class HapiLocalizer {
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(HapiLocalizer.class);
 	private static boolean ourFailOnMissingMessage;
 	private final Map<String, MessageFormat> myKeyToMessageFormat = new ConcurrentHashMap<>();
-	private List<ResourceBundle> myBundle = new ArrayList<>();
+	private List<ResourceBundle> myBundle;
 	private final Map<String, String> myHardcodedMessages = new HashMap<>();
-	private String[] myBundleNames;
+	private Locale myLocale = Locale.getDefault();
 
 	public HapiLocalizer() {
 		this(HapiLocalizer.class.getPackage().getName() + ".hapi-messages");
 	}
 
 	public HapiLocalizer(String... theBundleNames) {
-		myBundleNames = theBundleNames;
-		init();
+		init(theBundleNames);
 		addMessage("hapi.version", VersionUtil.getVersion());
 	}
 
@@ -158,13 +157,18 @@ public class HapiLocalizer {
 		return new MessageFormat(pattern.toString());
 	}
 
-	protected void init() {
-		for (String nextName : myBundleNames) {
+	protected void init(String[] theBundleNames) {
+		myBundle = new ArrayList<>();
+		for (String nextName : theBundleNames) {
 			myBundle.add(ResourceBundle.getBundle(nextName));
 		}
 	}
 
-	/**
+    public Locale getLocale() {
+		return myLocale;
+    }
+
+    /**
 	 * This <b>global setting</b> causes the localizer to fail if any attempts
 	 * are made to retrieve a key that does not exist. This method is primarily for
 	 * unit tests.

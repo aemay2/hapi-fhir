@@ -1,16 +1,22 @@
 package ca.uhn.fhir.jpa.provider.r4;
 
+import ca.uhn.fhir.jpa.entity.TermCodeSystem;
+import ca.uhn.fhir.jpa.entity.TermCodeSystemVersion;
+import ca.uhn.fhir.jpa.entity.TermConcept;
 import ca.uhn.fhir.jpa.model.util.JpaConstants;
 import ca.uhn.fhir.jpa.provider.TerminologyUploaderProvider;
 import ca.uhn.fhir.jpa.term.api.ITermLoaderSvc;
 import ca.uhn.fhir.rest.client.interceptor.LoggingInterceptor;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
-import ca.uhn.fhir.util.TestUtil;
 import com.google.common.base.Charsets;
 import org.apache.commons.io.IOUtils;
-import org.hl7.fhir.r4.model.*;
-import org.junit.AfterClass;
-import org.junit.Test;
+import org.hl7.fhir.r4.model.Attachment;
+import org.hl7.fhir.r4.model.CodeSystem;
+import org.hl7.fhir.r4.model.IntegerType;
+import org.hl7.fhir.r4.model.Parameters;
+import org.hl7.fhir.r4.model.Reference;
+import org.hl7.fhir.r4.model.UriType;
+import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -21,15 +27,37 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.*;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_ANSWERLIST_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_ANSWERLIST_LINK_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_DOCUMENT_ONTOLOGY_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_GROUP_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_GROUP_TERMS_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_HIERARCHY_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_IEEE_MEDICAL_DEVICE_CODE_MAPPING_TABLE_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_IMAGING_DOCUMENT_CODES_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_PARENT_GROUP_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_PART_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_PART_LINK_FILE_PRIMARY_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_PART_LINK_FILE_SUPPLEMENTARY_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_PART_RELATED_CODE_MAPPING_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_RSNA_PLAYBOOK_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_TOP2000_COMMON_LAB_RESULTS_SI_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_TOP2000_COMMON_LAB_RESULTS_US_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_UNIVERSAL_LAB_ORDER_VALUESET_FILE_DEFAULT;
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.LOINC_UPLOAD_PROPERTIES_FILE;
+import static org.apache.commons.lang3.StringUtils.leftPad;
 import static org.hamcrest.CoreMatchers.containsString;
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.hamcrest.Matchers.stringContainsInOrder;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Test {
 
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(TerminologyUploaderProviderR4Test.class);
-
 
 	private byte[] createSctZip() throws IOException {
 		ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -49,7 +77,7 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 		byte[] packageBytes = createSctZip();
 
 		try {
-			ourClient
+			myClient
 				.operation()
 				.onType(CodeSystem.class)
 				.named("upload-external-code-system")
@@ -66,7 +94,7 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 	public void testUploadLoinc() throws Exception {
 		byte[] packageBytes = createLoincZip();
 
-		Parameters respParam = ourClient
+		Parameters respParam = myClient
 			.operation()
 			.onType(CodeSystem.class)
 			.named("upload-external-code-system")
@@ -78,13 +106,13 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 		ourLog.info(resp);
 
 		assertThat(((IntegerType) respParam.getParameter().get(1).getValue()).getValue(), greaterThan(1));
-		assertThat(((Reference) respParam.getParameter().get(2).getValue()).getReference(), matchesPattern("CodeSystem\\/[a-zA-Z0-9]+"));
+		assertThat(((Reference) respParam.getParameter().get(2).getValue()).getReference(), matchesPattern("CodeSystem\\/[a-zA-Z0-9\\.\\-]+"));
 
 		/*
 		 * Try uploading a second time
 		 */
 
-		respParam = ourClient
+		respParam = myClient
 			.operation()
 			.onType(CodeSystem.class)
 			.named("upload-external-code-system")
@@ -100,7 +128,7 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 	@Test
 	public void testUploadMissingPackage() {
 		try {
-			ourClient
+			myClient
 				.operation()
 				.onType(CodeSystem.class)
 				.named("upload-external-code-system")
@@ -117,7 +145,7 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 		byte[] packageBytes = createSctZip();
 
 		try {
-			ourClient
+			myClient
 				.operation()
 				.onType(CodeSystem.class)
 				.named("upload-external-code-system")
@@ -134,7 +162,7 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 	public void testUploadSct() throws Exception {
 		byte[] packageBytes = createSctZip();
 
-		Parameters respParam = ourClient
+		Parameters respParam = myClient
 			.operation()
 			.onType(CodeSystem.class)
 			.named("upload-external-code-system")
@@ -158,12 +186,12 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 		fos.write(packageBytes);
 		fos.close();
 
-		Parameters respParam = ourClient
+		Parameters respParam = myClient
 			.operation()
 			.onType(CodeSystem.class)
 			.named("upload-external-code-system")
 			.withParameter(Parameters.class, TerminologyUploaderProvider.PARAM_SYSTEM, new UriType(ITermLoaderSvc.SCT_URI))
-			.andParameter(TerminologyUploaderProvider.PARAM_FILE, new Attachment().setUrl("localfile:"+tempFile.getAbsolutePath()))
+			.andParameter(TerminologyUploaderProvider.PARAM_FILE, new Attachment().setUrl("localfile:" + tempFile.getAbsolutePath()))
 			.execute();
 
 		String resp = myFhirCtx.newXmlParser().setPrettyPrint(true).encodeResourceToString(respParam);
@@ -173,7 +201,7 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 	}
 
 	@Test
-	public void testApplyDeltaAdd() throws IOException {
+	public void testApplyDeltaAdd_UsingCsv() throws IOException {
 		String conceptsCsv = loadResource("/custom_term/concepts.csv");
 		Attachment conceptsAttachment = new Attachment()
 			.setData(conceptsCsv.getBytes(Charsets.UTF_8))
@@ -186,8 +214,8 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 			.setUrl("file:/foo/hierarchy.csv");
 
 		LoggingInterceptor interceptor = new LoggingInterceptor(true);
-		ourClient.registerInterceptor(interceptor);
-		Parameters outcome = ourClient
+		myClient.registerInterceptor(interceptor);
+		Parameters outcome = myClient
 			.operation()
 			.onType(CodeSystem.class)
 			.named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_ADD)
@@ -196,7 +224,7 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 			.andParameter(TerminologyUploaderProvider.PARAM_FILE, hierarchyAttachment)
 			.prettyPrint()
 			.execute();
-		ourClient.unregisterInterceptor(interceptor);
+		myClient.unregisterInterceptor(interceptor);
 
 		String encoded = myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome);
 		ourLog.info(encoded);
@@ -209,6 +237,166 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 	}
 
 	@Test
+	public void testApplyDeltaAdd_UsingCodeSystem() {
+		CodeSystem codeSystem = new CodeSystem();
+		codeSystem.setUrl("http://foo/cs");
+		CodeSystem.ConceptDefinitionComponent chem = codeSystem.addConcept().setCode("CHEM").setDisplay("Chemistry");
+		chem.addConcept().setCode("HB").setDisplay("Hemoglobin");
+		chem.addConcept().setCode("NEUT").setDisplay("Neutrophils");
+		CodeSystem.ConceptDefinitionComponent micro = codeSystem.addConcept().setCode("MICRO").setDisplay("Microbiology");
+		micro.addConcept().setCode("C&S").setDisplay("Culture And Sensitivity");
+
+		LoggingInterceptor interceptor = new LoggingInterceptor(true);
+		myClient.registerInterceptor(interceptor);
+		Parameters outcome = myClient
+			.operation()
+			.onType(CodeSystem.class)
+			.named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_ADD)
+			.withParameter(Parameters.class, TerminologyUploaderProvider.PARAM_SYSTEM, new UriType("http://foo/cs"))
+			.andParameter(TerminologyUploaderProvider.PARAM_CODESYSTEM, codeSystem)
+			.prettyPrint()
+			.execute();
+		myClient.unregisterInterceptor(interceptor);
+
+		String encoded = myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome);
+		ourLog.info(encoded);
+		assertThat(encoded, stringContainsInOrder(
+			"\"name\": \"conceptCount\"",
+			"\"valueInteger\": 5",
+			"\"name\": \"target\"",
+			"\"reference\": \"CodeSystem/"
+		));
+
+		assertHierarchyContains(
+			"CHEM seq=0",
+			" HB seq=0",
+			" NEUT seq=1",
+			"MICRO seq=0",
+			" C&S seq=0"
+		);
+	}
+
+	@Test
+	public void testApplyDeltaAdd_UsingCodeSystemWithComma() throws IOException {
+
+		// Create initial codesystem
+		{
+			CodeSystem codeSystem = new CodeSystem();
+			codeSystem.setContent(CodeSystem.CodeSystemContentMode.NOTPRESENT);
+			codeSystem.setUrl("https://good.health");
+
+			LoggingInterceptor interceptor = new LoggingInterceptor(true);
+			myClient.registerInterceptor(interceptor);
+			myClient
+				.create()
+				.resource(codeSystem)
+				.execute();
+			myClient.unregisterInterceptor(interceptor);
+		}
+
+		// Add a child with a really long description
+		Parameters outcome;
+		{
+			Parameters inputBundle = loadResourceFromClasspath(Parameters.class, "/term-delta-json.json");
+
+			LoggingInterceptor interceptor = new LoggingInterceptor(true);
+			myClient.registerInterceptor(interceptor);
+			outcome = myClient
+				.operation()
+				.onType(CodeSystem.class)
+				.named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_ADD)
+				.withParameters(inputBundle)
+				.execute();
+			myClient.unregisterInterceptor(interceptor);
+		}
+
+		String encoded = myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome);
+		ourLog.info(encoded);
+		assertThat(encoded, stringContainsInOrder(
+			"\"name\": \"conceptCount\"",
+			"\"valueInteger\": 2",
+			"\"name\": \"target\"",
+			"\"reference\": \"CodeSystem/"
+		));
+
+		assertHierarchyContains(
+			"1111222233 seq=0",
+			" 1111222234 seq=0"
+		);
+
+		runInTransaction(() -> {
+			TermCodeSystem codeSystem = myTermCodeSystemDao.findByCodeSystemUri("https://good.health");
+			TermCodeSystemVersion version = codeSystem.getCurrentVersion();
+			TermConcept code = myTermConceptDao.findByCodeSystemAndCode(version, "1111222233").get();
+			assertEquals("Some label for the parent - with a dash too", code.getDisplay());
+
+			code = myTermConceptDao.findByCodeSystemAndCode(version, "1111222234").get();
+			assertEquals("Some very very very very very looooooong child label with a coma, another one, one more, more and final one", code.getDisplay());
+		});
+	}
+
+
+	@Test
+	public void testApplyDeltaAdd_UsingCodeSystemWithVeryLongDescription() {
+
+		// Create initial codesystem
+		{
+			CodeSystem codeSystem = new CodeSystem();
+			codeSystem.setUrl("http://foo/cs");
+			CodeSystem.ConceptDefinitionComponent chem = codeSystem.addConcept().setCode("CHEM").setDisplay("Chemistry");
+			chem.addConcept().setCode("HB").setDisplay("Hemoglobin");
+
+			LoggingInterceptor interceptor = new LoggingInterceptor(true);
+			myClient.registerInterceptor(interceptor);
+			Parameters outcome = myClient
+				.operation()
+				.onType(CodeSystem.class)
+				.named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_ADD)
+				.withParameter(Parameters.class, TerminologyUploaderProvider.PARAM_SYSTEM, new UriType("http://foo/cs"))
+				.andParameter(TerminologyUploaderProvider.PARAM_CODESYSTEM, codeSystem)
+				.prettyPrint()
+				.execute();
+			myClient.unregisterInterceptor(interceptor);
+		}
+
+		// Add a child with a really long description
+		Parameters outcome;
+		{
+			CodeSystem codeSystem = new CodeSystem();
+			codeSystem.setUrl("http://foo/cs");
+			CodeSystem.ConceptDefinitionComponent chem = codeSystem.addConcept().setCode("HB").setDisplay("Hemoglobin")
+				.addConcept().setCode("HBA").setDisplay(leftPad("", 500, 'Z'));
+
+			LoggingInterceptor interceptor = new LoggingInterceptor(true);
+			myClient.registerInterceptor(interceptor);
+			outcome = myClient
+				.operation()
+				.onType(CodeSystem.class)
+				.named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_ADD)
+				.withParameter(Parameters.class, TerminologyUploaderProvider.PARAM_SYSTEM, new UriType("http://foo/cs"))
+				.andParameter(TerminologyUploaderProvider.PARAM_CODESYSTEM, codeSystem)
+				.prettyPrint()
+				.execute();
+			myClient.unregisterInterceptor(interceptor);
+		}
+
+		String encoded = myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome);
+		ourLog.info(encoded);
+		assertThat(encoded, stringContainsInOrder(
+			"\"name\": \"conceptCount\"",
+			"\"valueInteger\": 2",
+			"\"name\": \"target\"",
+			"\"reference\": \"CodeSystem/"
+		));
+
+		assertHierarchyContains(
+			"CHEM seq=0",
+			" HB seq=0",
+			"  HBA seq=0"
+		);
+	}
+
+	@Test
 	public void testApplyDeltaAdd_MissingSystem() throws IOException {
 		String conceptsCsv = loadResource("/custom_term/concepts.csv");
 		Attachment conceptsAttachment = new Attachment()
@@ -217,10 +405,10 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 			.setUrl("file:/foo/concepts.csv");
 
 		LoggingInterceptor interceptor = new LoggingInterceptor(true);
-		ourClient.registerInterceptor(interceptor);
+		myClient.registerInterceptor(interceptor);
 
 		try {
-			ourClient
+			myClient
 				.operation()
 				.onType(CodeSystem.class)
 				.named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_ADD)
@@ -231,17 +419,17 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 		} catch (InvalidRequestException e) {
 			assertThat(e.getMessage(), containsString("Missing mandatory parameter: system"));
 		}
-		ourClient.unregisterInterceptor(interceptor);
+		myClient.unregisterInterceptor(interceptor);
 
 	}
 
 	@Test
 	public void testApplyDeltaAdd_MissingFile() {
 		LoggingInterceptor interceptor = new LoggingInterceptor(true);
-		ourClient.registerInterceptor(interceptor);
+		myClient.registerInterceptor(interceptor);
 
 		try {
-			ourClient
+			myClient
 				.operation()
 				.onType(CodeSystem.class)
 				.named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_ADD)
@@ -252,7 +440,7 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 		} catch (InvalidRequestException e) {
 			assertThat(e.getMessage(), containsString("Missing mandatory parameter: file"));
 		}
-		ourClient.unregisterInterceptor(interceptor);
+		myClient.unregisterInterceptor(interceptor);
 	}
 
 	@Test
@@ -269,7 +457,7 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 			.setUrl("file:/foo/hierarchy.csv");
 
 		// Add the codes
-		ourClient
+		myClient
 			.operation()
 			.onType(CodeSystem.class)
 			.named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_ADD)
@@ -281,8 +469,8 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 
 		// And remove them
 		LoggingInterceptor interceptor = new LoggingInterceptor(true);
-		ourClient.registerInterceptor(interceptor);
-		Parameters outcome = ourClient
+		myClient.registerInterceptor(interceptor);
+		Parameters outcome = myClient
 			.operation()
 			.onType(CodeSystem.class)
 			.named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_REMOVE)
@@ -291,17 +479,13 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 			.andParameter(TerminologyUploaderProvider.PARAM_FILE, hierarchyAttachment)
 			.prettyPrint()
 			.execute();
-		ourClient.unregisterInterceptor(interceptor);
+		myClient.unregisterInterceptor(interceptor);
 
 		String encoded = myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome);
 		ourLog.info(encoded);
 		assertThat(encoded, containsString("\"valueInteger\": 5"));
 	}
 
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
-	}
 
 	private static void addFile(ZipOutputStream theZos, String theFileName) throws IOException {
 		theZos.putNextEntry(new ZipEntry(theFileName));
@@ -321,7 +505,8 @@ public class TerminologyUploaderProviderR4Test extends BaseResourceProviderR4Tes
 		addFile(zos, LOINC_GROUP_FILE_DEFAULT.getCode());
 		addFile(zos, LOINC_GROUP_TERMS_FILE_DEFAULT.getCode());
 		addFile(zos, LOINC_PARENT_GROUP_FILE_DEFAULT.getCode());
-		addFile(zos, LOINC_PART_LINK_FILE_DEFAULT.getCode());
+		addFile(zos, LOINC_PART_LINK_FILE_PRIMARY_DEFAULT.getCode());
+		addFile(zos, LOINC_PART_LINK_FILE_SUPPLEMENTARY_DEFAULT.getCode());
 		addFile(zos, LOINC_PART_RELATED_CODE_MAPPING_FILE_DEFAULT.getCode());
 		addFile(zos, LOINC_DOCUMENT_ONTOLOGY_FILE_DEFAULT.getCode());
 		addFile(zos, LOINC_RSNA_PLAYBOOK_FILE_DEFAULT.getCode());

@@ -1,36 +1,44 @@
 package ca.uhn.fhir.jpa.dao.r4;
 
-import ca.uhn.fhir.jpa.term.TranslationMatch;
-import ca.uhn.fhir.jpa.term.TranslationRequest;
-import ca.uhn.fhir.jpa.term.TranslationResult;
-import ca.uhn.fhir.rest.api.MethodOutcome;
-import ca.uhn.fhir.rest.server.exceptions.PreconditionFailedException;
-import ca.uhn.fhir.util.TestUtil;
-import org.hl7.fhir.instance.model.api.IBaseResource;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Optional;
+
 import org.hl7.fhir.instance.model.api.IIdType;
-import org.hl7.fhir.r4.model.*;
+import org.hl7.fhir.r4.model.CanonicalType;
+import org.hl7.fhir.r4.model.CodeableConcept;
+import org.hl7.fhir.r4.model.Coding;
+import org.hl7.fhir.r4.model.ConceptMap;
 import org.hl7.fhir.r4.model.Enumerations.ConceptMapEquivalence;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.Test;
+import org.hl7.fhir.r4.model.Enumerations.PublicationStatus;
+import org.hl7.fhir.r4.model.UriType;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionCallbackWithoutResult;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.io.IOException;
-
-import static org.hamcrest.Matchers.containsString;
-import static org.junit.Assert.*;
+import ca.uhn.fhir.jpa.api.model.TranslationMatch;
+import ca.uhn.fhir.jpa.api.model.TranslationRequest;
+import ca.uhn.fhir.jpa.api.model.TranslationResult;
+import ca.uhn.fhir.jpa.entity.TermConceptMap;
 
 public class FhirResourceDaoR4ConceptMapTest extends BaseJpaR4Test {
 	private static final Logger ourLog = LoggerFactory.getLogger(FhirResourceDaoR4ConceptMapTest.class);
 
 	private IIdType myConceptMapId;
 
-	@Before
+	@BeforeEach
 	@Transactional
 	public void before02() {
 		myConceptMapId = myConceptMapDao.create(createConceptMap(), mySrd).getId().toUnqualifiedVersionless();
@@ -1041,6 +1049,94 @@ public class FhirResourceDaoR4ConceptMapTest extends BaseJpaR4Test {
 		});
 	}
 
+	/**
+	 * Some US core ConceptMaps use this style, e.g:
+	 *
+	 * http://hl7.org/fhir/us/core/ConceptMap/ndc-cvx
+	 */
+	@Test
+	public void testUploadConceptMapWithOnlyCanonicalSourceAtConceptMapLevel() {
+
+		ConceptMap cm = new ConceptMap();
+		cm.setUrl("http://foo");
+		cm.setSource(new CanonicalType("http://source"));
+		cm.setTarget(new CanonicalType("http://target"));
+		cm.addGroup().addElement().setCode("source1").addTarget().setCode("target1").setEquivalence(ConceptMapEquivalence.EQUAL);
+		myConceptMapDao.create(cm);
+
+		runInTransaction(()->{
+			TranslationRequest translationRequest = new TranslationRequest();
+			translationRequest.getCodeableConcept().addCoding()
+				.setSystem("http://source")
+				.setCode("source1");
+			translationRequest.setTarget(new UriType("http://target"));
+
+			ourLog.info("*** About to translate");
+			TranslationResult translationResult = myConceptMapDao.translate(translationRequest, null);
+			ourLog.info("*** Done translating");
+
+			assertTrue(translationResult.getResult().booleanValue());
+			assertEquals("Matches found!", translationResult.getMessage().getValueAsString());
+
+			assertEquals(1, translationResult.getMatches().size());
+
+			TranslationMatch translationMatch = translationResult.getMatches().get(0);
+			assertEquals("equal", translationMatch.getEquivalence().getCode());
+			Coding concept = translationMatch.getConcept();
+			assertEquals("target1", concept.getCode());
+			assertEquals(null, concept.getDisplay());
+			assertEquals("http://target", concept.getSystem());
+		});
+
+
+	}
+
+
+	/**
+	 * Handle ConceptMaps where targets are missing, such as this one:
+	 *
+	 * https://www.hl7.org/fhir/conceptmap-example-specimen-type.html
+	 */
+	@Test
+	public void testUploadConceptMapWithMappingTargetsMissing() {
+
+		ConceptMap cm = new ConceptMap();
+		cm.setUrl("http://foo");
+		cm.setSource(new CanonicalType("http://source"));
+		cm.setTarget(new CanonicalType("http://target"));
+		cm.addGroup().addElement().setCode("source1").addTarget().setCode("target1").setEquivalence(ConceptMapEquivalence.EQUAL);
+		cm.addGroup().addElement().setCode("source2"); // no target
+		cm.addGroup().addElement().setCode("source3").addTarget().setComment("No target code"); // no target code
+		myConceptMapDao.create(cm);
+
+		runInTransaction(()->{
+			TranslationRequest translationRequest = new TranslationRequest();
+			translationRequest.getCodeableConcept().addCoding()
+				.setSystem("http://source")
+				.setCode("source1");
+			translationRequest.setTarget(new UriType("http://target"));
+
+			ourLog.info("*** About to translate");
+			TranslationResult translationResult = myConceptMapDao.translate(translationRequest, null);
+			ourLog.info("*** Done translating");
+
+			assertTrue(translationResult.getResult().booleanValue());
+			assertEquals("Matches found!", translationResult.getMessage().getValueAsString());
+
+			assertEquals(1, translationResult.getMatches().size());
+
+			TranslationMatch translationMatch = translationResult.getMatches().get(0);
+			assertEquals("equal", translationMatch.getEquivalence().getCode());
+			Coding concept = translationMatch.getConcept();
+			assertEquals("target1", concept.getCode());
+			assertEquals(null, concept.getDisplay());
+			assertEquals("http://target", concept.getSystem());
+		});
+
+
+	}
+
+
 
 	@Test
 	public void testUploadAndApplyR4DemoConceptMap() throws IOException {
@@ -1058,9 +1154,74 @@ public class FhirResourceDaoR4ConceptMapTest extends BaseJpaR4Test {
 		assertEquals("S52.209A", outcome.getMatches().get(0).getConcept().getCode());
 	}
 
+	@Test
+	public void testConceptMapFindTermConceptMapByUrl() {
+			
+		Pageable page = PageRequest.of(0, 1);
+		List<TermConceptMap> theExpConceptMapList = myTermConceptMapDao.getTermConceptMapEntitiesByUrlOrderByMostRecentUpdate(page, CM_URL);
+		assertEquals(1, theExpConceptMapList.size());
+		assertEquals(CM_URL, theExpConceptMapList.get(0).getUrl());
+		
+	}
 
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
+	@Test
+	public void testConceptMapTwoConceptMapWithSameUrlDifferentVersion() {
+				
+		String theUrl = "http://loinc.org/property/analyte-suffix";
+		ConceptMap theConceptMap1 = new ConceptMap();
+		ConceptMap theConceptMap2 = new ConceptMap();
+		
+		theConceptMap1.setUrl(theUrl).setStatus(PublicationStatus.ACTIVE).setName("name1").setVersion("v1");
+		theConceptMap2.setUrl(theUrl).setStatus(PublicationStatus.ACTIVE).setName("name2").setVersion("v2");
+		
+		myConceptMapDao.create(theConceptMap1);
+		myConceptMapDao.create(theConceptMap2);
+		
+		Optional<TermConceptMap> theExpConceptMapV1 = myTermConceptMapDao.findTermConceptMapByUrlAndVersion(theUrl, "v1");
+		Optional<TermConceptMap> theExpConceptMapV2 = myTermConceptMapDao.findTermConceptMapByUrlAndVersion(theUrl, "v2");
+		
+		assertTrue(theExpConceptMapV1.isPresent());
+		assertEquals(theUrl, theExpConceptMapV1.get().getUrl());
+		assertEquals("v1", theExpConceptMapV1.get().getVersion());
+		
+		assertTrue(theExpConceptMapV2.isPresent());
+		assertEquals(theUrl, theExpConceptMapV2.get().getUrl());
+		assertEquals("v2", theExpConceptMapV2.get().getVersion());
+
+		// should return the latest one which is v2
+		Pageable page = PageRequest.of(0, 1);
+		List<TermConceptMap> theExpSecondOne = myTermConceptMapDao.getTermConceptMapEntitiesByUrlOrderByMostRecentUpdate(page, theUrl);
+		
+		assertEquals(1, theExpSecondOne.size());
+		assertEquals(theUrl, theExpSecondOne.get(0).getUrl());
+		assertEquals("v2", theExpSecondOne.get(0).getVersion());
+	}
+
+	@Test
+	public void testConceptMapTwoConceptMapWithSameUrlOneWithoutVersion() {
+				
+		String theUrl = "http://loinc.org/property/analyte-suffix";
+		ConceptMap theConceptMap1 = new ConceptMap();
+		ConceptMap theConceptMap2 = new ConceptMap();
+		
+		theConceptMap1.setUrl(theUrl).setStatus(PublicationStatus.ACTIVE).setName("name1").setVersion("v1");
+		theConceptMap2.setUrl(theUrl).setStatus(PublicationStatus.ACTIVE).setName("name2");
+		
+		myConceptMapDao.create(theConceptMap1);
+		myConceptMapDao.create(theConceptMap2);
+		
+		Optional<TermConceptMap> theExpConceptMapV1 = myTermConceptMapDao.findTermConceptMapByUrlAndVersion(theUrl, "v1");
+		
+		assertTrue(theExpConceptMapV1.isPresent());
+		assertEquals(theUrl, theExpConceptMapV1.get().getUrl());
+		assertEquals("v1", theExpConceptMapV1.get().getVersion());
+		
+		// should return the latest one which is v2
+		Pageable page = PageRequest.of(0, 1);
+		List<TermConceptMap> theExpSecondOne = myTermConceptMapDao.getTermConceptMapEntitiesByUrlOrderByMostRecentUpdate(page, theUrl);
+		
+		assertEquals(1, theExpSecondOne.size());
+		assertEquals(theUrl, theExpSecondOne.get(0).getUrl());
+		assertNull(theExpSecondOne.get(0).getVersion());
 	}
 }

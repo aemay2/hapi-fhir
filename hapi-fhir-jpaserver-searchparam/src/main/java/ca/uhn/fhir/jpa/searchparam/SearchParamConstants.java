@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.searchparam;
  * #%L
  * HAPI FHIR Search Parameters
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,6 @@ package ca.uhn.fhir.jpa.searchparam;
  */
 
 public class SearchParamConstants {
-
-	public static final String EXT_SP_UNIQUE = "http://hapifhir.io/fhir/StructureDefinition/sp-unique";
 
 	public static final String UCUM_NS = "http://unitsofmeasure.org";
 }

@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.entity;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,16 +20,34 @@ package ca.uhn.fhir.jpa.entity;
  * #L%
  */
 
-import ca.uhn.fhir.jpa.bulk.BulkJobStatusEnum;
+import ca.uhn.fhir.jpa.bulk.model.BulkJobStatusEnum;
 import org.apache.commons.lang3.builder.ToStringBuilder;
+import org.apache.commons.lang3.builder.ToStringStyle;
 import org.hl7.fhir.r5.model.InstantType;
 
-import javax.persistence.*;
+import javax.persistence.Column;
+import javax.persistence.Entity;
+import javax.persistence.EnumType;
+import javax.persistence.Enumerated;
+import javax.persistence.FetchType;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+import javax.persistence.Index;
+import javax.persistence.OneToMany;
+import javax.persistence.SequenceGenerator;
+import javax.persistence.Table;
+import javax.persistence.Temporal;
+import javax.persistence.TemporalType;
+import javax.persistence.UniqueConstraint;
+import javax.persistence.Version;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
 
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
+import static org.apache.commons.lang3.StringUtils.left;
 
 @Entity
 @Table(name = "HFJ_BLK_EXPORT_JOB", uniqueConstraints = {
@@ -37,7 +55,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 }, indexes = {
 	@Index(name = "IDX_BLKEX_EXPTIME", columnList = "EXP_TIME")
 })
-public class BulkExportJobEntity {
+public class BulkExportJobEntity implements Serializable {
 
 	public static final int REQUEST_LENGTH = 500;
 	public static final int STATUS_MESSAGE_LEN = 500;
@@ -64,7 +82,7 @@ public class BulkExportJobEntity {
 	private Date myExpiry;
 	@Column(name = "REQUEST", nullable = false, length = REQUEST_LENGTH)
 	private String myRequest;
-	@OneToMany(fetch = FetchType.LAZY, mappedBy = "myJob")
+	@OneToMany(fetch = FetchType.LAZY, mappedBy = "myJob", orphanRemoval = false)
 	private Collection<BulkExportCollectionEntity> myCollections;
 	@Version
 	@Column(name = "OPTLOCK", nullable = false)
@@ -88,7 +106,7 @@ public class BulkExportJobEntity {
 	}
 
 	public void setStatusMessage(String theStatusMessage) {
-		myStatusMessage = theStatusMessage;
+		myStatusMessage = left(theStatusMessage, STATUS_MESSAGE_LEN);
 	}
 
 	public String getRequest() {
@@ -120,7 +138,8 @@ public class BulkExportJobEntity {
 
 	@Override
 	public String toString() {
-		ToStringBuilder b = new ToStringBuilder(this);
+		ToStringBuilder b = new ToStringBuilder(this, ToStringStyle.SHORT_PREFIX_STYLE);
+		b.append("pid", myId);
 		if (isNotBlank(myJobId)) {
 			b.append("jobId", myJobId);
 		}

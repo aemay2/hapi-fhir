@@ -22,7 +22,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
  * #%L
  * HAPI FHIR - Core Library
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -130,6 +130,16 @@ public class BundleUtil {
 		return null;
 	}
 
+	public static void setBundleType(FhirContext theContext, IBaseBundle theBundle, String theType) {
+		RuntimeResourceDefinition def = theContext.getResourceDefinition(theBundle);
+		BaseRuntimeChildDefinition entryChild = def.getChildByName("type");
+		BaseRuntimeElementDefinition<?> element = entryChild.getChildByName("type");
+		IPrimitiveType<?> typeInstance = (IPrimitiveType<?>) element.newInstance(entryChild.getInstanceConstructorArguments());
+		typeInstance.setValueAsString(theType);
+
+		entryChild.getMutator().setValue(theBundle, typeInstance);
+	}
+
 	public static Integer getTotal(FhirContext theContext, IBaseBundle theBundle) {
 		RuntimeResourceDefinition def = theContext.getResourceDefinition(theBundle);
 		BaseRuntimeChildDefinition entryChild = def.getChildByName("total");
@@ -168,6 +178,8 @@ public class BundleUtil {
 
 		BaseRuntimeElementCompositeDefinition<?> entryChildContentsDef = (BaseRuntimeElementCompositeDefinition<?>) entryChildDef.getChildByName("entry");
 
+		BaseRuntimeChildDefinition fullUrlChildDef = entryChildContentsDef.getChildByName("fullUrl");
+
 		BaseRuntimeChildDefinition resourceChildDef = entryChildContentsDef.getChildByName("resource");
 		BaseRuntimeChildDefinition requestChildDef = entryChildContentsDef.getChildByName("request");
 		BaseRuntimeElementCompositeDefinition<?> requestChildContentsDef = (BaseRuntimeElementCompositeDefinition<?>) requestChildDef.getChildByName("request");
@@ -180,6 +192,11 @@ public class BundleUtil {
 			String url = null;
 			RequestTypeEnum requestType = null;
 			String conditionalUrl = null;
+			String fullUrl = fullUrlChildDef
+				.getAccessor()
+				.getFirstValueOrNull(nextEntry)
+				.map(t->((IPrimitiveType<?>)t).getValueAsString())
+				.orElse(null);
 
 			for (IBase nextResource : resourceChildDef.getAccessor().getValues(nextEntry)) {
 				resource = (IBaseResource) nextResource;
@@ -217,7 +234,7 @@ public class BundleUtil {
 			 * order in the original bundle.
 			 */
 			BundleEntryMutator mutator = new BundleEntryMutator(nextEntry, requestChildDef, requestChildContentsDef);
-			ModifiableBundleEntry entry = new ModifiableBundleEntry(new BundleEntryParts(requestType, url, resource, conditionalUrl), mutator);
+			ModifiableBundleEntry entry = new ModifiableBundleEntry(new BundleEntryParts(fullUrl, requestType, url, resource, conditionalUrl), mutator);
 			theProcessor.accept(entry);
 		}
 	}
@@ -260,12 +277,12 @@ public class BundleUtil {
 	 * <code>Bundle.entry.resource</code> is a Binary resource with a patch
 	 * payload type.
 	 */
-	public static boolean isDstu3TransactionPatch(IBaseResource thePayloadResource) {
+	public static boolean isDstu3TransactionPatch(FhirContext theContext, IBaseResource thePayloadResource) {
 		boolean isPatch = false;
 		if (thePayloadResource instanceof IBaseBinary) {
 			String contentType = ((IBaseBinary) thePayloadResource).getContentType();
 			 try {
-				 PatchTypeEnum.forContentTypeOrThrowInvalidRequestException(contentType);
+				 PatchTypeEnum.forContentTypeOrThrowInvalidRequestException(theContext, contentType);
 				 isPatch = true;
 			 } catch (InvalidRequestException e) {
 				 // ignore

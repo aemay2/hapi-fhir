@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.term;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,15 +27,42 @@ import java.util.Collection;
 
 public interface IValueSetConceptAccumulator {
 
+	void addMessage(String theMessage);
+
 	void includeConcept(String theSystem, String theCode, String theDisplay);
 
-	void includeConceptWithDesignations(String theSystem, String theCode, String theDisplay, Collection<TermConceptDesignation> theDesignations);
+	void includeConceptWithDesignations(String theSystem, String theCode, String theDisplay, @Nullable Collection<TermConceptDesignation> theDesignations);
 
-	void excludeConcept(String theSystem, String theCode);
+	/**
+	 * @return Returns <code>true</code> if the code was actually present and was removed
+	 */
+	boolean excludeConcept(String theSystem, String theCode);
 
 	@Nullable
 	default Integer getCapacityRemaining() {
 		return null;
+	}
+
+	@Nullable
+	default Integer getSkipCountRemaining() {
+		return null;
+	}
+
+	@Nullable
+	default void consumeSkipCount(int theSkipCountToConsume) {
+		// nothing
+	}
+
+	/**
+	 * Add or subtract from the total concept count (this is not necessarily the same thing as the number of concepts in
+	 * the accumulator, since the <code>offset</code> and <code>count</code> parameters applied to the expansion can cause
+	 * concepts to not actually be added.
+	 *
+	 * @param theAdd   If <code>true</code>, increment. If <code>false</code>, decrement.
+	 * @param theDelta The number of codes to add or subtract
+	 */
+	default void incrementOrDecrementTotalConcepts(boolean theAdd, int theDelta) {
+		// nothing
 	}
 
 }

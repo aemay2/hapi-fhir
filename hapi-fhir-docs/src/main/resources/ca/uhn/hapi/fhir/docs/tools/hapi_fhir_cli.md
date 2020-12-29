@@ -11,7 +11,7 @@ When you have downloaded the archive (either ZIP or tar.bz2), expand it into a d
 
 You can now try the tool out by executing the following command: `hapi-fhir-cli`
 
-This command should show a help screen, as shown in the screeenshot below.
+This command should show a help screen, as shown in the screenshot below.
 
 <img src="/hapi-fhir/docs/images/hapi-fhir-cli.png" alt="Basic screen shot" style="margin-left: 40px;"/>
 
@@ -38,6 +38,9 @@ java version "1.8.0_60"
 Java(TM) SE Runtime Environment (build 1.8.0_60-b27)
 Java HotSpot(TM) 64-Bit Server VM (build 25.60-b23, mixed mode)
 ```
+
+Individual commands can be troubleshooted by adding the `--debug` command line argument.
+
 If this does not help, please post a question on our [Google Group](https://groups.google.com/d/forum/hapi-fhir).
 
 # Server (run-server)
@@ -46,7 +49,7 @@ The CLI tool can be used to start a local, fully functional FHIR server which yo
 
 <img src="/hapi-fhir/docs/images/hapi-fhir-cli-run-server.png" alt="Run Server" style="margin-left: 40px;"/>
 
-Once the server has started, you can access the testing webpage by pointing your browser at <a href="http://localhost:8080/">http://localhost:8080/</a>. The FHIR server base URL will be <a href="http://localhost:8080/baseDstu2/">http://localhost:8080/baseDstu2/</a>.
+Once the server has started, you can access the testing webpage by pointing your browser at <a href="http://localhost:8080/">http://localhost:8080/</a>. The FHIR server base URL will be <a href="http://localhost:8080/baseDstu3/">http://localhost:8080/baseDstu3/</a>.
 
 Note that by default this server will not be populated with any resources at all. You can easily populate it with the FHIR example resources by <b>leaving it running</b> and opening a second terminal window, then using the <code>hapi-fhir-cli upload-examples</code> command (see the section below).
 
@@ -56,7 +59,7 @@ The server uses a local Derby database instance for storage. You may want to exe
 
 The <b>upload-examples</b> command downloads the complete set of FHIR example resources from the HL7 website, and uploads them to a server of your choice. This can be useful to populate a server with test data.
 
-To execute this command, uploading test resources to a local CLI server, issue the following: `hapi-fhir-cli upload-examples -t http://localhost:8080/baseDstu2`
+To execute this command, uploading test resources to a local CLI server, issue the following: `hapi-fhir-cli upload-examples -v dstu3 -t http://localhost:8080/baseDstu3`
 
 Note that this command may take a surprisingly long time to complete because of the large number of examples.
 
@@ -82,6 +85,6 @@ Note that the path and exact filename of the terminology files will likely need 
 
 # Migrate Database
 
-The `migrate-database` command may be used to Migrate a database schema when upgrading a <a href="./doc_jpa.html">HAPI FHIR JPA</a> project from one version of HAPI	FHIR to another version.
+The `migrate-database` command may be used to Migrate a database schema when upgrading a [HAPI FHIR JPA](/docs/server_jpa/introduction.html) project from one version of HAPI	FHIR to another version.
 
-See <a href="./doc_jpa.html#upgrading">Upgrading HAPI FHIR JPA</a> for information on how to use this command.
+See [Upgrading HAPI FHIR JPA](/docs/server_jpa/upgrading.html) for information on how to use this command.

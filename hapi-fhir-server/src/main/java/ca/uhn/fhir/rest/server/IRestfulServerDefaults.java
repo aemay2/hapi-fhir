@@ -12,7 +12,7 @@ import java.util.List;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -73,6 +73,20 @@ public interface IRestfulServerDefaults {
 	 * Returns the paging provider for this server
 	 */
 	IPagingProvider getPagingProvider();
+
+	/**
+	 * Default page size for searches. Null means no limit (DaoConfig might have size limit however)
+	 */
+	default Integer getDefaultPageSize() {
+		return null;
+	}
+
+	/**
+	 * Maximum page size for searches. Null means no upper limit.
+	 */
+	default Integer getMaximumPageSize() {
+		return null;
+	}
 
 	/**
 	 * Should the server "pretty print" responses by default (requesting clients can always override this default by

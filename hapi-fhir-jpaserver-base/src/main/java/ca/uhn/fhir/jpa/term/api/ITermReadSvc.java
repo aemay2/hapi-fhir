@@ -1,22 +1,27 @@
 package ca.uhn.fhir.jpa.term.api;
 
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoCodeSystem;
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoValueSet.ValidateCodeResult;
+import ca.uhn.fhir.context.support.ConceptValidationOptions;
+import ca.uhn.fhir.context.support.IValidationSupport;
+import ca.uhn.fhir.context.support.ValueSetExpansionOptions;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoCodeSystem;
+import ca.uhn.fhir.jpa.api.model.TranslationRequest;
 import ca.uhn.fhir.jpa.entity.TermConcept;
 import ca.uhn.fhir.jpa.entity.TermConceptMapGroupElement;
 import ca.uhn.fhir.jpa.entity.TermConceptMapGroupElementTarget;
 import ca.uhn.fhir.jpa.model.entity.ResourceTable;
 import ca.uhn.fhir.jpa.term.IValueSetConceptAccumulator;
-import ca.uhn.fhir.jpa.term.TranslationRequest;
-import ca.uhn.fhir.jpa.term.VersionIndependentConcept;
+import ca.uhn.fhir.util.FhirVersionIndependentConcept;
 import org.hl7.fhir.instance.model.api.IBaseCoding;
 import org.hl7.fhir.instance.model.api.IBaseDatatype;
 import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.instance.model.api.IIdType;
 import org.hl7.fhir.instance.model.api.IPrimitiveType;
 import org.hl7.fhir.r4.model.CodeSystem;
 import org.hl7.fhir.r4.model.ConceptMap;
 import org.hl7.fhir.r4.model.ValueSet;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -25,7 +30,7 @@ import java.util.Set;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,43 +56,40 @@ import java.util.Set;
  * been moved yet)
  * </p>
  */
-public interface ITermReadSvc {
+public interface ITermReadSvc extends IValidationSupport {
 
-	ValueSet expandValueSetInMemory(ValueSet theValueSetToExpand, VersionIndependentConcept theWantConceptOrNull);
+	ValueSet expandValueSet(@Nullable ValueSetExpansionOptions theExpansionOptions, @Nonnull String theValueSetCanonicalUrl, @Nullable String theExpansionFilter);
 
-	ValueSet expandValueSet(ValueSet theValueSetToExpand, int theOffset, int theCount);
+	ValueSet expandValueSet(@Nullable ValueSetExpansionOptions theExpansionOptions, @Nonnull ValueSet theValueSetToExpand);
 
-	void expandValueSet(ValueSet theValueSetToExpand, IValueSetConceptAccumulator theValueSetCodeAccumulator);
+	ValueSet expandValueSet(@Nullable ValueSetExpansionOptions theExpansionOptions, @Nonnull ValueSet theValueSetToExpand, @Nullable String theFilter);
 
-	/**
-	 * Version independent
-	 */
-	IBaseResource expandValueSet(IBaseResource theValueSetToExpand);
+	void expandValueSet(@Nullable ValueSetExpansionOptions theExpansionOptions, ValueSet theValueSetToExpand, IValueSetConceptAccumulator theValueSetCodeAccumulator);
 
 	/**
 	 * Version independent
 	 */
-	IBaseResource expandValueSet(IBaseResource theValueSetToExpand, int theOffset, int theCount);
+	IBaseResource expandValueSet(@Nullable ValueSetExpansionOptions theExpansionOptions, IBaseResource theValueSetToExpand);
 
-	void expandValueSet(IBaseResource theValueSetToExpand, IValueSetConceptAccumulator theValueSetCodeAccumulator);
+	void expandValueSet(@Nullable ValueSetExpansionOptions theExpansionOptions, IBaseResource theValueSetToExpand, IValueSetConceptAccumulator theValueSetCodeAccumulator);
 
-	List<VersionIndependentConcept> expandValueSet(String theValueSet);
+	List<FhirVersionIndependentConcept> expandValueSetIntoConceptList(ValueSetExpansionOptions theExpansionOptions, String theValueSetCanonicalUrl);
 
 	Optional<TermConcept> findCode(String theCodeSystem, String theCode);
 
 	Set<TermConcept> findCodesAbove(Long theCodeSystemResourcePid, Long theCodeSystemResourceVersionPid, String theCode);
 
-	List<VersionIndependentConcept> findCodesAbove(String theSystem, String theCode);
+	List<FhirVersionIndependentConcept> findCodesAbove(String theSystem, String theCode);
 
-	List<VersionIndependentConcept> findCodesAboveUsingBuiltInSystems(String theSystem, String theCode);
+	List<FhirVersionIndependentConcept> findCodesAboveUsingBuiltInSystems(String theSystem, String theCode);
 
 	Set<TermConcept> findCodesBelow(Long theCodeSystemResourcePid, Long theCodeSystemResourceVersionPid, String theCode);
 
-	List<VersionIndependentConcept> findCodesBelow(String theSystem, String theCode);
+	List<FhirVersionIndependentConcept> findCodesBelow(String theSystem, String theCode);
 
-	List<VersionIndependentConcept> findCodesBelowUsingBuiltInSystems(String theSystem, String theCode);
+	List<FhirVersionIndependentConcept> findCodesBelowUsingBuiltInSystems(String theSystem, String theCode);
 
-	CodeSystem getCodeSystemFromContext(String theSystem);
+	CodeSystem fetchCanonicalCodeSystemFromCompleteContext(String theSystem);
 
 	void deleteConceptMapAndChildren(ResourceTable theResourceTable);
 
@@ -96,8 +98,6 @@ public interface ITermReadSvc {
 	void storeTermConceptMapAndChildren(ResourceTable theResourceTable, ConceptMap theConceptMap);
 
 	void storeTermValueSet(ResourceTable theResourceTable, ValueSet theValueSet);
-
-	boolean supportsSystem(String theCodeSystem);
 
 	List<TermConceptMapGroupElementTarget> translate(TranslationRequest theTranslationRequest);
 
@@ -110,7 +110,12 @@ public interface ITermReadSvc {
 	/**
 	 * Version independent
 	 */
-	ValidateCodeResult validateCodeIsInPreExpandedValueSet(IBaseResource theValueSet, String theSystem, String theCode, String theDisplay, IBaseDatatype theCoding, IBaseDatatype theCodeableConcept);
+	CodeValidationResult validateCode(ConceptValidationOptions theOptions, IIdType theValueSetId, String theValueSetUrl, String theSystem, String theCode, String theDisplay, IBaseDatatype theCoding, IBaseDatatype theCodeableConcept);
+
+	/**
+	 * Version independent
+	 */
+	CodeValidationResult validateCodeIsInPreExpandedValueSet(ConceptValidationOptions theOptions, IBaseResource theValueSet, String theSystem, String theCode, String theDisplay, IBaseDatatype theCoding, IBaseDatatype theCodeableConcept);
 
 	boolean isValueSetPreExpandedForCodeValidation(ValueSet theValueSet);
 
@@ -119,5 +124,9 @@ public interface ITermReadSvc {
 	 */
 	boolean isValueSetPreExpandedForCodeValidation(IBaseResource theValueSet);
 
+	/**
+	 * Version independent
+	 */
+	CodeValidationResult codeSystemValidateCode(IIdType theCodeSystemId, String theValueSetUrl, String theVersion, String theCode, String theDisplay, IBaseDatatype theCoding, IBaseDatatype theCodeableConcept);
 
 }

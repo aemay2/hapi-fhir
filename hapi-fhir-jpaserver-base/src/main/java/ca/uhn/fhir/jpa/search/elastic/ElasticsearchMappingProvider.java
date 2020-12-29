@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.search.elastic;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,14 @@ public class ElasticsearchMappingProvider implements ElasticsearchAnalysisDefini
 			.param("min_gram", "3")
 			.param("max_gram", "50");
 
+		builder.analyzer("autocompleteWordEdgeAnalyzer")
+     		.withTokenizer("standard")
+		    .withTokenFilters("lowercase", "stop", "wordedgengram_3_50");
+	    builder.tokenFilter("wordedgengram_3_50")
+		    .type("edgeNGram")
+		    .param("min_gram", "3")
+		    .param("max_gram", "20");
+	
 		builder.analyzer("autocompletePhoneticAnalyzer")
 			.withTokenizer("standard")
 			.withTokenFilters("standard", "stop", "snowball_english");
@@ -51,7 +59,7 @@ public class ElasticsearchMappingProvider implements ElasticsearchAnalysisDefini
 
 		builder.analyzer("standardAnalyzer").withTokenizer("standard").withTokenFilters("lowercase");
 
-		builder.analyzer("exactAnalyzer").withTokenizer("standard");
+		builder.analyzer("exactAnalyzer").withTokenizer("keyword");
 
 		builder.analyzer("conceptParentPidsAnalyzer").withTokenizer("whitespace");
 

@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.term;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ package ca.uhn.fhir.jpa.term;
  */
 
 import ca.uhn.fhir.jpa.term.api.ITermLoaderSvc;
+import ca.uhn.fhir.jpa.util.LogicUtil;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import org.apache.commons.io.FileUtils;
@@ -31,6 +32,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -51,29 +53,30 @@ public class LoadedFileDescriptors implements Closeable {
 						try (BufferedInputStream bufferedInputStream = new BufferedInputStream(inputStream)) {
 							try (ZipInputStream zis = new ZipInputStream(bufferedInputStream)) {
 								for (ZipEntry nextEntry; (nextEntry = zis.getNextEntry()) != null; ) {
-									BOMInputStream fis = new BOMInputStream(zis);
-									File nextTemporaryFile = File.createTempFile("hapifhir", ".tmp");
-									ourLog.info("Creating temporary file: {}", nextTemporaryFile.getAbsolutePath());
-									nextTemporaryFile.deleteOnExit();
-									try (FileOutputStream fos = new FileOutputStream(nextTemporaryFile, false)) {
-										IOUtils.copy(fis, fos);
-										String nextEntryFileName = nextEntry.getName();
-										myUncompressedFileDescriptors.add(new ITermLoaderSvc.FileDescriptor() {
-											@Override
-											public String getFilename() {
-												return nextEntryFileName;
-											}
-
-											@Override
-											public InputStream getInputStream() {
-												try {
-													return new FileInputStream(nextTemporaryFile);
-												} catch (FileNotFoundException e) {
-													throw new InternalErrorException(e);
+									try (BOMInputStream fis = new NonClosableBOMInputStream(zis)) {
+										File nextTemporaryFile = File.createTempFile("hapifhir", ".tmp");
+										ourLog.info("Creating temporary file: {}", nextTemporaryFile.getAbsolutePath());
+										nextTemporaryFile.deleteOnExit();
+										try (FileOutputStream fos = new FileOutputStream(nextTemporaryFile, false)) {
+											IOUtils.copy(fis, fos);
+											String nextEntryFileName = nextEntry.getName();
+											myUncompressedFileDescriptors.add(new ITermLoaderSvc.FileDescriptor() {
+												@Override
+												public String getFilename() {
+													return nextEntryFileName;
 												}
-											}
-										});
-										myTemporaryFiles.add(nextTemporaryFile);
+
+												@Override
+												public InputStream getInputStream() {
+													try {
+														return new FileInputStream(nextTemporaryFile);
+													} catch (FileNotFoundException e) {
+														throw new InternalErrorException(e);
+													}
+												}
+											});
+											myTemporaryFiles.add(nextTemporaryFile);
+										}
 									}
 								}
 							}
@@ -139,5 +142,33 @@ public class LoadedFileDescriptors implements Closeable {
 		}
 	}
 
+	void verifyPartLinkFilesExist(List<String> theMultiPartLinkFiles, String theSinglePartLinkFile) {
+		List<String> notFoundMulti = notFound(theMultiPartLinkFiles);
+		List<String> notFoundSingle = notFound(Arrays.asList(theSinglePartLinkFile));
+		// Expect all of the files in theMultiPartLinkFiles to be found and theSinglePartLinkFile to not be found,
+		// or none of the files in theMultiPartLinkFiles to be found and the SinglePartLinkFile to be found.
+		boolean multiPartFilesFound = notFoundMulti.isEmpty();
+		boolean singlePartFilesFound = notFoundSingle.isEmpty();
+		if (!LogicUtil.multiXor(multiPartFilesFound, singlePartFilesFound)) {
+			String msg;
+			if (!multiPartFilesFound && !singlePartFilesFound) {
+				msg = "Could not find any of the PartLink files: " + notFoundMulti + " nor " + notFoundSingle;
+			} else {
+				msg = "Only either the single PartLink file or the split PartLink files can be present. Found both the single PartLink file, " + theSinglePartLinkFile + ", and the split PartLink files: " + theMultiPartLinkFiles;
+			}
+			throw new UnprocessableEntityException(msg);
+		}
+	}
 
+
+	private static class NonClosableBOMInputStream extends BOMInputStream {
+		NonClosableBOMInputStream(InputStream theWrap) {
+			super(theWrap);
+		}
+
+		@Override
+		public void close() {
+			// nothing
+		}
+	}
 }

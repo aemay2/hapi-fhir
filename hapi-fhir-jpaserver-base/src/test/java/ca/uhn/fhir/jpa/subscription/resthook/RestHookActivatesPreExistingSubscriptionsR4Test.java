@@ -1,8 +1,8 @@
 package ca.uhn.fhir.jpa.subscription.resthook;
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.FhirVersionEnum;
 import ca.uhn.fhir.jpa.provider.r4.BaseResourceProviderR4Test;
-import ca.uhn.fhir.jpa.subscription.SubscriptionActivatingInterceptor;
 import ca.uhn.fhir.jpa.subscription.SubscriptionTestUtil;
 import ca.uhn.fhir.rest.annotation.ResourceParam;
 import ca.uhn.fhir.rest.annotation.Update;
@@ -16,7 +16,7 @@ import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.*;
-import org.junit.*;
+import org.junit.jupiter.api.*; import static org.hamcrest.MatcherAssert.assertThat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,7 +27,7 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import ca.uhn.fhir.test.utilities.JettyUtil;
 
@@ -45,19 +45,13 @@ public class RestHookActivatesPreExistingSubscriptionsR4Test extends BaseResourc
 	@Autowired
 	private SubscriptionTestUtil mySubscriptionTestUtil;
 
-	@After
-	public void afterResetSubscriptionActivatingInterceptor() {
-		SubscriptionActivatingInterceptor.setWaitForSubscriptionActivationSynchronouslyForUnitTest(false);
-	}
-
-	@After
+	@AfterEach
 	public void afterUnregisterRestHookListener() {
 		mySubscriptionTestUtil.unregisterSubscriptionInterceptor();
 	}
 
-	@Before
+	@BeforeEach
 	public void beforeSetSubscriptionActivatingInterceptor() {
-		SubscriptionActivatingInterceptor.setWaitForSubscriptionActivationSynchronouslyForUnitTest(true);
 		mySubscriptionLoader.doSyncSubscriptionsForUnitTest();
 	}
 
@@ -73,7 +67,7 @@ public class RestHookActivatesPreExistingSubscriptionsR4Test extends BaseResourc
 		channel.setPayload(thePayload);
 		channel.setEndpoint(theEndpoint);
 
-		MethodOutcome methodOutcome = ourClient.create().resource(subscription).execute();
+		MethodOutcome methodOutcome = myClient.create().resource(subscription).execute();
 		subscription.setId(methodOutcome.getId().getIdPart());
 
 		waitForQueueToDrain();
@@ -90,7 +84,7 @@ public class RestHookActivatesPreExistingSubscriptionsR4Test extends BaseResourc
 
 		observation.setStatus(Observation.ObservationStatus.FINAL);
 
-		MethodOutcome methodOutcome = ourClient.create().resource(observation).execute();
+		MethodOutcome methodOutcome = myClient.create().resource(observation).execute();
 
 		String observationId = methodOutcome.getId().getIdPart();
 		observation.setId(observationId);
@@ -155,9 +149,9 @@ public class RestHookActivatesPreExistingSubscriptionsR4Test extends BaseResourc
 
 	}
 
-	@BeforeClass
+	@BeforeAll
 	public static void startListenerServer() throws Exception {
-		ourListenerRestServer = new RestfulServer(FhirContext.forR4());
+		ourListenerRestServer = new RestfulServer(FhirContext.forCached(FhirVersionEnum.R4));
 		
 		ObservationListener obsListener = new ObservationListener();
 		ourListenerRestServer.setResourceProviders(obsListener);
@@ -177,7 +171,7 @@ public class RestHookActivatesPreExistingSubscriptionsR4Test extends BaseResourc
         ourListenerServerBase = "http://localhost:" + ourListenerPort + "/fhir/context";
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void stopListenerServer() throws Exception {
 		JettyUtil.closeServer(ourListenerServer);
 	}

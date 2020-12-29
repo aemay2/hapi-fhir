@@ -4,7 +4,7 @@ package ca.uhn.fhir.rest.server.interceptor.auth;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,4 +30,9 @@ public interface IAuthRuleBuilderRuleOpDelete extends IAuthRuleBuilderRuleOp {
 	 */
 	IAuthRuleBuilderRuleOp onCascade();
 
+	/**
+	 * Specifies that this rule applies to delete expunges as opposed to regular
+	 * deletes.  A delete expunge is a delete operation called with the _expunge=true parameter.
+	 */
+	IAuthRuleBuilderRuleOp onExpunge();
 }

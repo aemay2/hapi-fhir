@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.interceptor;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -77,6 +77,11 @@ public class PerformanceTracingLoggingInterceptor {
 	@Hook(value = Pointcut.JPA_PERFTRACE_SEARCH_FAILED)
 	public void searchFailed(SearchRuntimeDetails theOutcome) {
 		log("SqlQuery {} failed in {} - Found {} matches", theOutcome.getSearchUuid(), theOutcome.getQueryStopwatch(), theOutcome.getFoundMatchesCount());
+	}
+
+	@Hook(value = Pointcut.JPA_PERFTRACE_INDEXSEARCH_QUERY_COMPLETE)
+	public void indexSearchQueryComplete(SearchRuntimeDetails theOutcome) {
+		log("Index query for {} completed in {} - Found {} matches", theOutcome.getSearchUuid(), theOutcome.getQueryStopwatch(), theOutcome.getFoundIndexMatchesCount());
 	}
 
 	@Hook(value = Pointcut.JPA_PERFTRACE_INFO)

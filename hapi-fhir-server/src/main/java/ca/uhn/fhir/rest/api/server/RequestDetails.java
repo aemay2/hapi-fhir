@@ -1,9 +1,7 @@
 package ca.uhn.fhir.rest.api.server;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.interceptor.api.HookParams;
 import ca.uhn.fhir.interceptor.api.IInterceptorBroadcaster;
-import ca.uhn.fhir.interceptor.api.Pointcut;
 import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.RequestTypeEnum;
 import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
@@ -15,7 +13,6 @@ import org.apache.commons.lang3.Validate;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
 
-import javax.annotation.Nonnull;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -23,7 +20,11 @@ import java.io.InputStream;
 import java.io.Reader;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
@@ -32,7 +33,7 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,7 +61,6 @@ public abstract class RequestDetails {
 	private String myOperation;
 	private Map<String, String[]> myParameters;
 	private byte[] myRequestContents;
-	private DeferredOperationCallback myDeferredInterceptorBroadcaster;
 	private String myRequestPath;
 	private RequestTypeEnum myRequestType;
 	private String myResourceName;
@@ -73,6 +73,7 @@ public abstract class RequestDetails {
 	private Map<Object, Object> myUserData;
 	private IBaseResource myResource;
 	private String myRequestId;
+	private String myTransactionGuid;
 	private String myFixedConditionalUrl;
 
 	/**
@@ -300,9 +301,6 @@ public abstract class RequestDetails {
 	 * all interceptors
 	 */
 	public IInterceptorBroadcaster getInterceptorBroadcaster() {
-		if (myDeferredInterceptorBroadcaster != null) {
-			return myDeferredInterceptorBroadcaster;
-		}
 		return myInterceptorBroadcaster;
 	}
 
@@ -462,6 +460,15 @@ public abstract class RequestDetails {
 		if (myRequestContents == null) {
 			myRequestContents = getByteStreamRequestContents();
 		}
+		return getRequestContentsIfLoaded();
+	}
+
+	/**
+	 * Returns the request contents if they were loaded, returns <code>null</code> otherwise
+	 *
+	 * @see #loadRequestContents()
+	 */
+	public byte[] getRequestContentsIfLoaded() {
 		return myRequestContents;
 	}
 
@@ -486,63 +493,12 @@ public abstract class RequestDetails {
 		myRequestContents = theRequestContents;
 	}
 
-	/**
-	 * Sets the {@link #getInterceptorBroadcaster()} () interceptor broadcaster} handler in
-	 * deferred mode, meaning that any notifications will be queued up for delivery, but
-	 * won't be delivered until {@link #stopDeferredRequestOperationCallbackAndRunDeferredItems()}
-	 * is called.
-	 */
-	public void startDeferredOperationCallback() {
-		myDeferredInterceptorBroadcaster = new DeferredOperationCallback(myInterceptorBroadcaster);
+	public String getTransactionGuid() {
+		return myTransactionGuid;
 	}
 
-	/**
-	 * @see #startDeferredOperationCallback()
-	 */
-	public void stopDeferredRequestOperationCallbackAndRunDeferredItems() {
-		DeferredOperationCallback deferredCallback = myDeferredInterceptorBroadcaster;
-		deferredCallback.playDeferredActions();
-		myInterceptorBroadcaster = deferredCallback.getWrap();
-		myDeferredInterceptorBroadcaster = null;
-	}
-
-
-	private class DeferredOperationCallback implements IInterceptorBroadcaster {
-
-		private final IInterceptorBroadcaster myWrap;
-		private final List<Runnable> myDeferredTasks = new ArrayList<>();
-
-		private DeferredOperationCallback(@Nonnull IInterceptorBroadcaster theWrap) {
-			Validate.notNull(theWrap);
-			myWrap = theWrap;
-		}
-
-
-		void playDeferredActions() {
-			myDeferredTasks.forEach(Runnable::run);
-		}
-
-		IInterceptorBroadcaster getWrap() {
-			return myWrap;
-		}
-
-		@Override
-		public boolean callHooks(Pointcut thePointcut, HookParams theParams) {
-			myDeferredTasks.add(() -> myWrap.callHooks(thePointcut, theParams));
-			return true;
-		}
-
-		@Override
-		public Object callHooksAndReturnObject(Pointcut thePointcut, HookParams theParams) {
-			myDeferredTasks.add(() -> myWrap.callHooksAndReturnObject(thePointcut, theParams));
-			return null;
-		}
-
-		@Override
-		public boolean hasHooks(Pointcut thePointcut) {
-			return myWrap.hasHooks(thePointcut);
-		}
-
+	public void setTransactionGuid(String theTransactionGuid) {
+		myTransactionGuid = theTransactionGuid;
 	}
 
 

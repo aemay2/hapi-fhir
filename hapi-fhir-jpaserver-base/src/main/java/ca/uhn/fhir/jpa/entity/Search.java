@@ -1,6 +1,8 @@
 package ca.uhn.fhir.jpa.entity;
 
+import ca.uhn.fhir.interceptor.model.RequestPartitionId;
 import ca.uhn.fhir.jpa.model.search.SearchStatusEnum;
+import ca.uhn.fhir.jpa.search.SearchCoordinatorSvcImpl;
 import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
 import ca.uhn.fhir.model.api.Include;
 import ca.uhn.fhir.rest.param.DateRangeParam;
@@ -11,10 +13,34 @@ import org.hibernate.annotations.OptimisticLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.persistence.*;
-import javax.validation.constraints.NotNull;
+import javax.annotation.Nonnull;
+import javax.persistence.Basic;
+import javax.persistence.Column;
+import javax.persistence.Entity;
+import javax.persistence.EnumType;
+import javax.persistence.Enumerated;
+import javax.persistence.FetchType;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+import javax.persistence.Index;
+import javax.persistence.Lob;
+import javax.persistence.OneToMany;
+import javax.persistence.SequenceGenerator;
+import javax.persistence.Table;
+import javax.persistence.Temporal;
+import javax.persistence.TemporalType;
+import javax.persistence.UniqueConstraint;
+import javax.persistence.Version;
 import java.io.Serializable;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 
 import static org.apache.commons.lang3.StringUtils.left;
 
@@ -22,7 +48,7 @@ import static org.apache.commons.lang3.StringUtils.left;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,16 +65,17 @@ import static org.apache.commons.lang3.StringUtils.left;
  */
 
 @Entity
-@Table(name = "HFJ_SEARCH", uniqueConstraints = {
+@Table(name = Search.HFJ_SEARCH, uniqueConstraints = {
 	@UniqueConstraint(name = "IDX_SEARCH_UUID", columnNames = "SEARCH_UUID")
 }, indexes = {
-	@Index(name = "IDX_SEARCH_LASTRETURNED", columnList = "SEARCH_LAST_RETURNED"),
-	@Index(name = "IDX_SEARCH_RESTYPE_HASHS", columnList = "RESOURCE_TYPE,SEARCH_QUERY_STRING_HASH,CREATED")
+	@Index(name = "IDX_SEARCH_RESTYPE_HASHS", columnList = "RESOURCE_TYPE,SEARCH_QUERY_STRING_HASH,CREATED"),
+	@Index(name = "IDX_SEARCH_CREATED", columnList = "CREATED")
 })
 public class Search implements ICachedSearchDetails, Serializable {
 
 	@SuppressWarnings("WeakerAccess")
 	public static final int UUID_COLUMN_LENGTH = 36;
+	public static final String HFJ_SEARCH = "HFJ_SEARCH";
 	private static final int MAX_SEARCH_QUERY_STRING = 10000;
 	private static final int FAILURE_MESSAGE_LENGTH = 500;
 	private static final long serialVersionUID = 1L;
@@ -89,11 +116,9 @@ public class Search implements ICachedSearchDetails, Serializable {
 	private Long myResourceId;
 	@Column(name = "RESOURCE_TYPE", length = 200, nullable = true)
 	private String myResourceType;
-	@NotNull
-	@Temporal(TemporalType.TIMESTAMP)
-	@Column(name = "SEARCH_LAST_RETURNED", nullable = false, updatable = false)
-	@OptimisticLock(excluded = true)
-	private Date mySearchLastReturned;
+	/**
+	 * Note that this field may have the request partition IDs prepended to it
+	 */
 	@Lob()
 	@Basic(fetch = FetchType.LAZY)
 	@Column(name = "SEARCH_QUERY_STRING", nullable = true, updatable = false, length = MAX_SEARCH_QUERY_STRING)
@@ -117,6 +142,7 @@ public class Search implements ICachedSearchDetails, Serializable {
 	@Lob
 	@Column(name = "SEARCH_PARAM_MAP", nullable = true)
 	private byte[] mySearchParameterMap;
+
 	/**
 	 * Constructor
 	 */
@@ -184,6 +210,9 @@ public class Search implements ICachedSearchDetails, Serializable {
 
 	public void setFailureMessage(String theFailureMessage) {
 		myFailureMessage = left(theFailureMessage, FAILURE_MESSAGE_LENGTH);
+		if (System.getProperty(SearchCoordinatorSvcImpl.UNIT_TEST_CAPTURE_STACK) != null) {
+			myFailureMessage = theFailureMessage;
+		}
 	}
 
 	public Long getId() {
@@ -257,27 +286,27 @@ public class Search implements ICachedSearchDetails, Serializable {
 		myResourceType = theResourceType;
 	}
 
-	public Date getSearchLastReturned() {
-		return mySearchLastReturned;
-	}
-
-	public void setSearchLastReturned(Date theDate) {
-		mySearchLastReturned = theDate;
-	}
-
+	/**
+	 * Note that this field may have the request partition IDs prepended to it
+	 */
 	public String getSearchQueryString() {
 		return mySearchQueryString;
 	}
 
-	public void setSearchQueryString(String theSearchQueryString) {
-		if (theSearchQueryString == null || theSearchQueryString.length() > MAX_SEARCH_QUERY_STRING) {
+	public void setSearchQueryString(String theSearchQueryString, RequestPartitionId theRequestPartitionId) {
+		String searchQueryString = null;
+		if (theSearchQueryString != null) {
+			searchQueryString = createSearchQueryStringForStorage(theSearchQueryString, theRequestPartitionId);
+		}
+		if (searchQueryString == null || searchQueryString.length() > MAX_SEARCH_QUERY_STRING) {
 			// We want this field to always have a wide distribution of values in order
 			// to avoid optimizers avoiding using it if it has lots of nulls, so in the
 			// case of null, just put a value that will never be hit
 			mySearchQueryString = UUID.randomUUID().toString();
 		} else {
-			mySearchQueryString = theSearchQueryString;
+			mySearchQueryString = searchQueryString;
 		}
+
 		mySearchQueryStringHash = mySearchQueryString.hashCode();
 	}
 
@@ -320,10 +349,6 @@ public class Search implements ICachedSearchDetails, Serializable {
 		myLastUpdatedHigh = theUpperBound;
 	}
 
-	public void setSearchQueryStringHash(Integer theSearchQueryStringHash) {
-		mySearchQueryStringHash = theSearchQueryStringHash;
-	}
-
 	private Set<Include> toIncList(boolean theWantReverse) {
 		HashSet<Include> retVal = new HashSet<>();
 		for (SearchInclude next : getIncludes()) {
@@ -361,5 +386,14 @@ public class Search implements ICachedSearchDetails, Serializable {
 	@Override
 	public void setCannotBeReused() {
 		mySearchQueryStringHash = null;
+	}
+
+	@Nonnull
+	public static String createSearchQueryStringForStorage(@Nonnull String theSearchQueryString, @Nonnull RequestPartitionId theRequestPartitionId) {
+		String searchQueryString = theSearchQueryString;
+		if (!theRequestPartitionId.isAllPartitions()) {
+			searchQueryString = RequestPartitionId.stringifyForKey(theRequestPartitionId) + " " + searchQueryString;
+		}
+		return searchQueryString;
 	}
 }

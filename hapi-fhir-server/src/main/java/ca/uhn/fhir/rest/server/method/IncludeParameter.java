@@ -4,7 +4,7 @@ package ca.uhn.fhir.rest.server.method;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,14 +20,6 @@ package ca.uhn.fhir.rest.server.method;
  * #L%
  */
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.TreeSet;
-
 import ca.uhn.fhir.context.ConfigurationException;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.model.api.Include;
@@ -35,8 +27,17 @@ import ca.uhn.fhir.rest.annotation.IncludeParam;
 import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.QualifiedParamList;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
+import ca.uhn.fhir.rest.param.ParameterUtil;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 
 class IncludeParameter extends BaseQueryParameter {
 
@@ -107,6 +108,11 @@ class IncludeParameter extends BaseQueryParameter {
 	}
 
 	@Override
+	protected boolean supportsRepetition() {
+		return myInstantiableCollectionType != null;
+	}
+
+	@Override
 	public boolean handlesMissing() {
 		return true;
 	}
@@ -137,7 +143,7 @@ class IncludeParameter extends BaseQueryParameter {
 			}
 
 			String qualifier = nextParamList.getQualifier();
-			boolean recurse = Constants.PARAM_INCLUDE_QUALIFIER_RECURSE.equals(qualifier) || Constants.PARAM_INCLUDE_QUALIFIER_ITERATE.equals(qualifier);
+			boolean iterate = ParameterUtil.isIncludeIterate(qualifier);
 
 			String value = nextParamList.get(0);
 			if (myAllow != null && !myAllow.isEmpty()) {
@@ -152,10 +158,10 @@ class IncludeParameter extends BaseQueryParameter {
 				if (mySpecType == String.class) {
 					return value;
 				}
-				return new Include(value, recurse);
+				return new Include(value, iterate);
 			}
-			//FIXME null access
-			retValCollection.add(new Include(value, recurse));
+
+			retValCollection.add(new Include(value, iterate));
 		}
 
 		return retValCollection;

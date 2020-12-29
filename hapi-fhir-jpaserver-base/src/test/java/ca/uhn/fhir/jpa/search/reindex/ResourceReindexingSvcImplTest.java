@@ -1,41 +1,59 @@
 package ca.uhn.fhir.jpa.search.reindex;
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.FhirVersionEnum;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
+import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDao;
+import ca.uhn.fhir.jpa.dao.BaseHapiFhirDao;
 import ca.uhn.fhir.jpa.dao.BaseJpaTest;
-import ca.uhn.fhir.jpa.dao.DaoConfig;
-import ca.uhn.fhir.jpa.dao.DaoRegistry;
-import ca.uhn.fhir.jpa.dao.IFhirResourceDao;
 import ca.uhn.fhir.jpa.dao.data.IForcedIdDao;
 import ca.uhn.fhir.jpa.dao.data.IResourceReindexJobDao;
 import ca.uhn.fhir.jpa.dao.data.IResourceTableDao;
 import ca.uhn.fhir.jpa.entity.ResourceReindexJobEntity;
 import ca.uhn.fhir.jpa.model.entity.ResourceTable;
+import ca.uhn.fhir.jpa.model.sched.ISchedulerService;
 import ca.uhn.fhir.jpa.searchparam.registry.ISearchParamRegistry;
 import org.apache.commons.lang3.time.DateUtils;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
 import org.hl7.fhir.r4.model.Observation;
 import org.hl7.fhir.r4.model.Patient;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.SliceImpl;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.anyBoolean;
+import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.anyLong;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 
 public class ResourceReindexingSvcImplTest extends BaseJpaTest {
 
-	private static FhirContext ourCtx = FhirContext.forR4();
+	private static FhirContext ourCtx = FhirContext.forCached(FhirVersionEnum.R4);
 
 	@Mock
 	private PlatformTransactionManager myTxManager;
@@ -66,6 +84,10 @@ public class ResourceReindexingSvcImplTest extends BaseJpaTest {
 	private ResourceReindexJobEntity mySingleJob;
 	@Mock
 	private ISearchParamRegistry mySearchParamRegistry;
+	@Mock
+	private TransactionStatus myTxStatus;
+	@Mock
+	private ISchedulerService mySchedulerService;
 
 	@Override
 	protected FhirContext getContext() {
@@ -77,7 +99,7 @@ public class ResourceReindexingSvcImplTest extends BaseJpaTest {
 		return myTxManager;
 	}
 
-	@Before
+	@BeforeEach
 	public void before() {
 		myDaoConfig = new DaoConfig();
 		myDaoConfig.setReindexThreadCount(2);
@@ -91,7 +113,21 @@ public class ResourceReindexingSvcImplTest extends BaseJpaTest {
 		mySvc.setResourceTableDaoForUnitTest(myResourceTableDao);
 		mySvc.setTxManagerForUnitTest(myTxManager);
 		mySvc.setSearchParamRegistryForUnitTest(mySearchParamRegistry);
+		mySvc.setSchedulerServiceForUnitTest(mySchedulerService);
 		mySvc.start();
+
+		when(myTxManager.getTransaction(any())).thenReturn(myTxStatus);
+	}
+
+	@Test
+	public void testNoParallelReindexing() throws InterruptedException {
+		CountDownLatch latch = new CountDownLatch(1);
+		new Thread(()->{
+			mySvc.getIndexingLockForUnitTest().lock();
+			latch.countDown();
+		}).start();
+		latch.await(10, TimeUnit.SECONDS);
+		mySvc.runReindexingPass();
 	}
 
 	@Test
@@ -237,6 +273,37 @@ public class ResourceReindexingSvcImplTest extends BaseJpaTest {
 		verify(myReindexJobDao, times(1)).getReindexCount(any());
 		verify(myReindexJobDao, times(1)).setReindexCount(any(), anyInt());
 		verifyNoMoreInteractions(myReindexJobDao);
+	}
+
+	@Test
+	public void testReindexDeletedResource() {
+		mockNothingToExpunge();
+		mockSingleReindexingJob("Patient");
+		// Mock resource fetch
+		List<Long> values = Arrays.asList(0L);
+		when(myResourceTableDao.findIdsOfResourcesWithinUpdatedRangeOrderedFromOldest(myPageRequestCaptor.capture(), myTypeCaptor.capture(), myLowCaptor.capture(), myHighCaptor.capture())).thenReturn(new SliceImpl<>(values));
+		// Mock fetching resources
+		long[] updatedTimes = new long[]{
+			10 * DateUtils.MILLIS_PER_DAY
+		};
+		String[] resourceTypes = new String[]{
+			"Patient",
+		};
+		List<IBaseResource> resources = Arrays.asList(
+			new Patient().setId("Patient/0/_history/1")
+		);
+		mockWhenResourceTableFindById(updatedTimes, resourceTypes);
+		when(myDaoRegistry.getResourceDao(eq("Patient"))).thenReturn(myResourceDao);
+		when(myDaoRegistry.getResourceDao(eq(Patient.class))).thenReturn(myResourceDao);
+		when(myDaoRegistry.getResourceDao(eq("Observation"))).thenReturn(myResourceDao);
+		when(myDaoRegistry.getResourceDao(eq(Observation.class))).thenReturn(myResourceDao);
+		when(myResourceDao.read(any(), any(), anyBoolean())).thenReturn(null);
+
+
+		int count = mySvc.forceReindexingPass();
+		assertEquals(0, count);
+
+		verify(myResourceTableDao, times(1)).updateIndexStatus(eq(0L), eq(BaseHapiFhirDao.INDEX_STATUS_INDEXING_FAILED));
 	}
 
 	@Test

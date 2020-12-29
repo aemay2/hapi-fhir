@@ -1,18 +1,18 @@
 package ca.uhn.fhir.jpa.term;
 
-import ca.uhn.fhir.jpa.dao.DaoConfig;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
 import ca.uhn.fhir.jpa.dao.r4.BaseJpaR4Test;
 import ca.uhn.fhir.jpa.entity.TermCodeSystemVersion;
 import ca.uhn.fhir.jpa.entity.TermConcept;
 import ca.uhn.fhir.jpa.entity.TermConceptParentChildLink;
+import ca.uhn.fhir.rest.api.server.storage.ResourcePersistentId;
 import ca.uhn.fhir.jpa.model.entity.ResourceTable;
 import org.hl7.fhir.instance.model.api.IIdType;
 import org.hl7.fhir.r4.model.CodeSystem;
 import org.hl7.fhir.r4.model.ValueSet;
 import org.hl7.fhir.r4.model.codesystems.HttpVerb;
-import org.junit.After;
-import org.junit.Before;
-import org.springframework.test.context.TestPropertySource;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallbackWithoutResult;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -20,9 +20,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 import javax.annotation.Nonnull;
 import java.io.IOException;
 
-@TestPropertySource(properties = {
-	"scheduling_disabled=true"
-})
 public abstract class BaseTermR4Test extends BaseJpaR4Test {
 
 	IIdType myExtensionalCsId;
@@ -30,12 +27,12 @@ public abstract class BaseTermR4Test extends BaseJpaR4Test {
 	Long myExtensionalCsIdOnResourceTable;
 	Long myExtensionalVsIdOnResourceTable;
 
-	@Before
+	@BeforeEach
 	public void before() {
 		myDaoConfig.setAllowExternalReferences(true);
 	}
 
-	@After
+	@AfterEach
 	public void after() {
 		myDaoConfig.setAllowExternalReferences(new DaoConfig().isAllowExternalReferences());
 		myDaoConfig.setPreExpandValueSets(new DaoConfig().isPreExpandValueSets());
@@ -90,7 +87,7 @@ public abstract class BaseTermR4Test extends BaseJpaR4Test {
 		TermConcept parentB = new TermConcept(cs, "ParentB");
 		cs.getConcepts().add(parentB);
 
-		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(table.getId(), CS_URL, "SYSTEM NAME", "SYSTEM VERSION", cs, table);
+		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(new ResourcePersistentId(table.getId()), CS_URL, "SYSTEM NAME", "SYSTEM VERSION", cs, table);
 
 		return id;
 	}

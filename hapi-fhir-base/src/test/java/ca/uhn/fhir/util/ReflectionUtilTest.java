@@ -1,11 +1,12 @@
 package ca.uhn.fhir.util;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import ca.uhn.fhir.context.ConfigurationException;
 
@@ -45,4 +46,18 @@ public class ReflectionUtilTest {
 			assertEquals("Failed to instantiate java.util.List", e.getMessage());
 		}
 	}
+
+	@Test
+	public void testTypeExists() {
+		assertFalse(ReflectionUtil.typeExists("ca.Foo"));
+		assertTrue(ReflectionUtil.typeExists(String.class.getName()));
+	}
+
+	@Test
+	public void testDescribeMethod() throws NoSuchMethodException {
+		Method method = String.class.getMethod("startsWith", String.class, int.class);
+		String description = ReflectionUtil.describeMethodInSortFriendlyWay(method);
+		assertEquals("startsWith returns(boolean) params(java.lang.String, int)", description);
+	}
+
 }

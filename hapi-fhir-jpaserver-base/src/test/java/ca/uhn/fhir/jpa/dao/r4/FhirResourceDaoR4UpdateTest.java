@@ -1,6 +1,7 @@
 package ca.uhn.fhir.jpa.dao.r4;
 
-import ca.uhn.fhir.jpa.dao.DaoConfig;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
+import ca.uhn.fhir.rest.api.server.storage.ResourcePersistentId;
 import ca.uhn.fhir.jpa.model.entity.ResourceHistoryTable;
 import ca.uhn.fhir.jpa.model.entity.ResourceTable;
 import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
@@ -15,31 +16,57 @@ import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
-import org.hl7.fhir.r4.model.*;
-import org.junit.*;
-import org.springframework.test.context.TestPropertySource;
+import org.hl7.fhir.r4.model.CanonicalType;
+import org.hl7.fhir.r4.model.CodeSystem;
+import org.hl7.fhir.r4.model.Coding;
+import org.hl7.fhir.r4.model.ContactPoint;
+import org.hl7.fhir.r4.model.IdType;
+import org.hl7.fhir.r4.model.InstantType;
+import org.hl7.fhir.r4.model.Meta;
+import org.hl7.fhir.r4.model.Organization;
+import org.hl7.fhir.r4.model.Patient;
+import org.hl7.fhir.r4.model.Resource;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.TimeZone;
+import java.util.UUID;
 
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.verify;
 
-@TestPropertySource(properties = {
-	"scheduling_disabled=true"
-})
 public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(FhirResourceDaoR4UpdateTest.class);
 
-	@After
+	@AfterEach
 	public void afterResetDao() {
 		myDaoConfig.setResourceMetaCountHardLimit(new DaoConfig().getResourceMetaCountHardLimit());
 		myDaoConfig.setIndexMissingFields(new DaoConfig().getIndexMissingFields());
+		myDaoConfig.setResourceServerIdStrategy(new DaoConfig().getResourceServerIdStrategy());
+		myDaoConfig.setResourceClientIdStrategy(new DaoConfig().getResourceClientIdStrategy());
 	}
 
-	@Before
+	@BeforeEach
 	public void before() {
 		myInterceptorRegistry.registerInterceptor(myInterceptor);
 	}
@@ -86,6 +113,91 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 
 	}
 
+	@Test
+	public void testUpdateConditionalOnEmailParameterWithPlusSymbol() {
+		IBundleProvider outcome;
+
+		myCaptureQueriesListener.clear();
+		Patient p = new Patient();
+		p.addTelecom()
+			.setSystem(ContactPoint.ContactPointSystem.EMAIL)
+			.setValue("help-im+a@bug.com");
+		myPatientDao.update(p, "Patient?email=help-im+a@bug.com");
+		myCaptureQueriesListener.logSelectQueries();
+
+		outcome = myPatientDao.search(SearchParameterMap.newSynchronous());
+		assertEquals(1, outcome.sizeOrThrowNpe());
+
+		p = new Patient();
+		p.addTelecom()
+			.setSystem(ContactPoint.ContactPointSystem.EMAIL)
+			.setValue("help-im+a@bug.com");
+		myPatientDao.update(p, "Patient?email=help-im+a@bug.com");
+
+		outcome = myPatientDao.search(SearchParameterMap.newSynchronous());
+		assertEquals(1, outcome.sizeOrThrowNpe());
+
+	}
+
+	@Test
+	public void testUpdateConditionalOnEmailParameterWithPlusSymbolCorrectlyEscaped() {
+		IBundleProvider outcome;
+
+		myCaptureQueriesListener.clear();
+		Patient p = new Patient();
+		p.addTelecom()
+			.setSystem(ContactPoint.ContactPointSystem.EMAIL)
+			.setValue("help-im+a@bug.com");
+		myPatientDao.update(p, "Patient?email=help-im%2Ba@bug.com");
+		myCaptureQueriesListener.logSelectQueries();
+
+		outcome = myPatientDao.search(SearchParameterMap.newSynchronous());
+		assertEquals(1, outcome.sizeOrThrowNpe());
+
+		p = new Patient();
+		p.addTelecom()
+			.setSystem(ContactPoint.ContactPointSystem.EMAIL)
+			.setValue("help-im+a@bug.com");
+		myPatientDao.update(p, "Patient?email=help-im%2Ba@bug.com");
+
+		outcome = myPatientDao.search(SearchParameterMap.newSynchronous());
+		assertEquals(1, outcome.sizeOrThrowNpe());
+
+	}
+
+
+	/**
+	 * Just in case any hash values are missing
+	 */
+	@Test
+	public void testCreateAndUpdateStringAndTokenWhereHashesAreNull() {
+		Patient p = new Patient();
+		p.addIdentifier().setSystem("sys1").setValue("val1");
+		p.addName().setFamily("FAMILY1");
+		IIdType id = myPatientDao.create(p).getId().toUnqualifiedVersionless();
+
+		runInTransaction(()->{
+			myEntityManager.createQuery("UPDATE ResourceIndexedSearchParamString s SET s.myHashIdentity = null").executeUpdate();
+			myEntityManager.createQuery("UPDATE ResourceIndexedSearchParamString s SET s.myHashExact = null").executeUpdate();
+			myEntityManager.createQuery("UPDATE ResourceIndexedSearchParamString s SET s.myHashNormalizedPrefix = null").executeUpdate();
+			myEntityManager.createQuery("UPDATE ResourceIndexedSearchParamToken s SET s.myHashIdentity = null").executeUpdate();
+			myEntityManager.createQuery("UPDATE ResourceIndexedSearchParamToken s SET s.myHashSystem = null").executeUpdate();
+			myEntityManager.createQuery("UPDATE ResourceIndexedSearchParamToken s SET s.myHashValue = null").executeUpdate();
+			myEntityManager.createQuery("UPDATE ResourceIndexedSearchParamToken s SET s.myHashSystemAndValue = null").executeUpdate();
+		});
+
+		p = new Patient();
+		p.setId(id);
+		p.addIdentifier().setSystem("sys2").setValue("val2");
+		p.addName().setFamily("FAMILY2");
+		myPatientDao.update(p);
+
+		SearchParameterMap map = new SearchParameterMap();
+		map.setLoadSynchronous(true);
+		map.add(Patient.SP_FAMILY, new StringParam("FAMILY2"));
+		Patient newPatient = (Patient) myPatientDao.search(map).getResources(0,1).get(0);
+		assertEquals("FAMILY2", newPatient.getName().get(0).getFamily());
+	}
 
 	@Test
 	public void testUpdateNotModifiedDoesNotAffectDates() {
@@ -538,7 +650,7 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 	}
 
 	@Test
-	@Ignore
+	@Disabled
 	public void testUpdateIgnoresIdenticalVersions() {
 		String methodName = "testUpdateIgnoresIdenticalVersions";
 
@@ -568,9 +680,9 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 		p2.addName().setFamily("Tester").addGiven("testUpdateMaintainsSearchParamsDstu2BBB");
 		myPatientDao.create(p2, mySrd).getId();
 
-		Set<Long> ids = myPatientDao.searchForIds(new SearchParameterMap(Patient.SP_GIVEN, new StringParam("testUpdateMaintainsSearchParamsDstu2AAA")), null);
+		Set<ResourcePersistentId> ids = myPatientDao.searchForIds(new SearchParameterMap(Patient.SP_GIVEN, new StringParam("testUpdateMaintainsSearchParamsDstu2AAA")), null);
 		assertEquals(1, ids.size());
-		assertThat(ids, contains(p1id.getIdPartAsLong()));
+		assertThat(ResourcePersistentId.toLongList(ids), contains(p1id.getIdPartAsLong()));
 
 		// Update the name
 		p1.getName().get(0).getGiven().get(0).setValue("testUpdateMaintainsSearchParamsDstu2BBB");
@@ -709,7 +821,7 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 			p2.setId(new IdType("Patient/" + p1id.getIdPart()));
 			myOrganizationDao.update(p2, mySrd);
 			fail();
-		} catch (UnprocessableEntityException e) {
+		} catch (InvalidRequestException e) {
 			ourLog.error("Good", e);
 		}
 
@@ -928,9 +1040,23 @@ public class FhirResourceDaoR4UpdateTest extends BaseJpaR4Test {
 
 	}
 
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
+	@Test
+	public void testUpdateWithUuidServerResourceStrategy_ClientIdNotAllowed() {
+		myDaoConfig.setResourceServerIdStrategy(DaoConfig.IdStrategyEnum.UUID);
+		myDaoConfig.setResourceClientIdStrategy(DaoConfig.ClientIdStrategyEnum.NOT_ALLOWED);
+
+		Patient p = new Patient();
+		p.setId(UUID.randomUUID().toString());
+		p.addName().setFamily("FAM");
+		try {
+			myPatientDao.update(p);
+			fail();
+		} catch (ResourceNotFoundException e) {
+			assertThat(e.getMessage(), matchesPattern("No resource exists on this server resource with ID.*, and client-assigned IDs are not enabled."));
+		}
+
 	}
+
+
 
 }

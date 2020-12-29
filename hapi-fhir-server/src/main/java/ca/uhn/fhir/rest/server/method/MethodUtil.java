@@ -4,7 +4,7 @@ package ca.uhn.fhir.rest.server.method;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,6 @@ import ca.uhn.fhir.rest.server.method.ResourceParameter.Mode;
 import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
 import ca.uhn.fhir.util.ParametersUtil;
 import ca.uhn.fhir.util.ReflectionUtil;
-import ca.uhn.fhir.util.ValidateUtil;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IPrimitiveType;
 
@@ -144,7 +143,7 @@ public class MethodUtil {
 						parameter.setRequired(true);
 						parameter.setDeclaredTypes(((RequiredParam) nextAnnotation).targetTypes());
 						parameter.setCompositeTypes(((RequiredParam) nextAnnotation).compositeTypes());
-						parameter.setChainlists(((RequiredParam) nextAnnotation).chainWhitelist(), ((RequiredParam) nextAnnotation).chainBlacklist());
+						parameter.setChainLists(((RequiredParam) nextAnnotation).chainWhitelist(), ((RequiredParam) nextAnnotation).chainBlacklist());
 						parameter.setType(theContext, parameterType, innerCollectionType, outerCollectionType);
 						MethodUtil.extractDescription(parameter, annotations);
 						param = parameter;
@@ -154,12 +153,12 @@ public class MethodUtil {
 						parameter.setRequired(false);
 						parameter.setDeclaredTypes(((OptionalParam) nextAnnotation).targetTypes());
 						parameter.setCompositeTypes(((OptionalParam) nextAnnotation).compositeTypes());
-						parameter.setChainlists(((OptionalParam) nextAnnotation).chainWhitelist(), ((OptionalParam) nextAnnotation).chainBlacklist());
+						parameter.setChainLists(((OptionalParam) nextAnnotation).chainWhitelist(), ((OptionalParam) nextAnnotation).chainBlacklist());
 						parameter.setType(theContext, parameterType, innerCollectionType, outerCollectionType);
 						MethodUtil.extractDescription(parameter, annotations);
 						param = parameter;
 					} else if (nextAnnotation instanceof RawParam) {
-						param = new RawParamsParmeter(parameters);
+						param = new RawParamsParameter(parameters);
 					} else if (nextAnnotation instanceof IncludeParam) {
 						Class<? extends Collection<Include>> instantiableCollectionType;
 						Class<?> specType;
@@ -192,13 +191,14 @@ public class MethodUtil {
 							b.append(theMethod.getName());
 							b.append("' is annotated with @");
 							b.append(ResourceParam.class.getSimpleName());
-							b.append(" but has a type that is not an implemtation of ");
+							b.append(" but has a type that is not an implementation of ");
 							b.append(IBaseResource.class.getCanonicalName());
 							b.append(" or String or byte[]");
 							throw new ConfigurationException(b.toString());
 						}
 						boolean methodIsOperation = theMethod.getAnnotation(Operation.class) != null;
-						param = new ResourceParameter((Class<? extends IBaseResource>) parameterType, theProvider, mode, methodIsOperation);
+						boolean methodIsPatch = theMethod.getAnnotation(Patch.class) != null;
+						param = new ResourceParameter((Class<? extends IBaseResource>) parameterType, theProvider, mode, methodIsOperation, methodIsPatch);
 					} else if (nextAnnotation instanceof IdParam) {
 						param = new NullParameter();
 					} else if (nextAnnotation instanceof ServerBase) {
@@ -213,8 +213,12 @@ public class MethodUtil {
 						((AtParameter) param).setType(theContext, parameterType, innerCollectionType, outerCollectionType);
 					} else if (nextAnnotation instanceof Count) {
 						param = new CountParameter();
-					} else if (nextAnnotation instanceof GraphQLQuery) {
-						param = new GraphQLQueryParameter();
+					} else if (nextAnnotation instanceof Offset) {
+						param = new OffsetParameter();
+					} else if (nextAnnotation instanceof GraphQLQueryUrl) {
+						param = new GraphQLQueryUrlParameter();
+					} else if (nextAnnotation instanceof GraphQLQueryBody) {
+						param = new GraphQLQueryBodyParameter();
 					} else if (nextAnnotation instanceof Sort) {
 						param = new SortParameter(theContext);
 					} else if (nextAnnotation instanceof TransactionParam) {
@@ -223,11 +227,20 @@ public class MethodUtil {
 						param = new ConditionalParamBinder(theRestfulOperationTypeEnum, ((ConditionalUrlParam) nextAnnotation).supportsMultiple());
 					} else if (nextAnnotation instanceof OperationParam) {
 						Operation op = theMethod.getAnnotation(Operation.class);
+						if (op == null) {
+							throw new ConfigurationException(
+								"@OperationParam detected on method that is not annotated with @Operation: " + theMethod.toGenericString());
+						}
+
 						OperationParam operationParam = (OperationParam) nextAnnotation;
 						param = new OperationParameter(theContext, op.name(), operationParam);
 						if (isNotBlank(operationParam.typeName())) {
 							BaseRuntimeElementDefinition<?> elementDefinition = theContext.getElementDefinition(operationParam.typeName());
+							if (elementDefinition == null) {
+								elementDefinition = theContext.getResourceDefinition(operationParam.typeName());
+							}
 							org.apache.commons.lang3.Validate.notNull(elementDefinition, "Unknown type name in @OperationParam: typeName=\"%s\"", operationParam.typeName());
+
 							Class<?> newParameterType = elementDefinition.getImplementingClass();
 							if (!declaredParameterType.isAssignableFrom(newParameterType)) {
 								throw new ConfigurationException("Non assignable parameter typeName=\"" + operationParam.typeName() + "\" specified on method " + theMethod);

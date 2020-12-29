@@ -12,21 +12,20 @@ import ca.uhn.fhir.rest.api.server.RequestDetails;
 import org.hl7.fhir.instance.model.api.IBaseMetaType;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.lang.reflect.Method;
 import java.util.List;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
-@SuppressWarnings("unchecked")
-@RunWith(MockitoJUnitRunner.class)
+@SuppressWarnings(value = "unchecked")
+@ExtendWith(MockitoExtension.class)
 public class ReadMethodBindingTest {
 
 	@Mock
@@ -56,12 +55,17 @@ public class ReadMethodBindingTest {
 		// Read
 		ReadMethodBinding binding = createBinding(new MyProvider());
 		when(myRequestDetails.getId()).thenReturn(new IdDt("Patient/123"));
-		assertTrue(binding.incomingServerRequestMatchesMethod(myRequestDetails));
+		assertEquals(MethodMatchEnum.EXACT, binding.incomingServerRequestMatchesMethod(myRequestDetails));
 
 		// VRead
+		when(myRequestDetails.getId()).thenReturn(new IdDt("Patient/123/_history/123"));
+		assertEquals(MethodMatchEnum.NONE, binding.incomingServerRequestMatchesMethod(myRequestDetails));
+
+		// Type history
+		when(myRequestDetails.getId()).thenReturn(new IdDt("Patient/123"));
 		when(myRequestDetails.getResourceName()).thenReturn("Patient");
 		when(myRequestDetails.getOperation()).thenReturn("_history");
-		assertFalse(binding.incomingServerRequestMatchesMethod(myRequestDetails));
+		assertEquals(MethodMatchEnum.NONE, binding.incomingServerRequestMatchesMethod(myRequestDetails));
 
 	}
 
@@ -84,23 +88,48 @@ public class ReadMethodBindingTest {
 		ReadMethodBinding binding = createBinding(new MyProvider());
 		when(myRequestDetails.getResourceName()).thenReturn("Observation");
 		when(myRequestDetails.getId()).thenReturn(new IdDt("Observation/123"));
-		assertFalse(binding.incomingServerRequestMatchesMethod(myRequestDetails));
+		assertEquals(MethodMatchEnum.NONE, binding.incomingServerRequestMatchesMethod(myRequestDetails));
 
 		// Read
 		when(myRequestDetails.getResourceName()).thenReturn("Patient");
 		when(myRequestDetails.getId()).thenReturn(new IdDt("Patient/123"));
-		assertTrue(binding.incomingServerRequestMatchesMethod(myRequestDetails));
+		assertEquals(MethodMatchEnum.EXACT, binding.incomingServerRequestMatchesMethod(myRequestDetails));
 
 		// VRead
 		when(myRequestDetails.getId()).thenReturn(new IdDt("Patient/123/_history/123"));
 		when(myRequestDetails.getOperation()).thenReturn("_history");
-		assertTrue(binding.incomingServerRequestMatchesMethod(myRequestDetails));
+		assertEquals(MethodMatchEnum.EXACT, binding.incomingServerRequestMatchesMethod(myRequestDetails));
 
 		// Some other operation
 		when(myRequestDetails.getId()).thenReturn(new IdDt("Patient/123/_history/123"));
 		when(myRequestDetails.getOperation()).thenReturn("$foo");
-		assertFalse(binding.incomingServerRequestMatchesMethod(myRequestDetails));
+		assertEquals(MethodMatchEnum.NONE, binding.incomingServerRequestMatchesMethod(myRequestDetails));
 
+		// History operation
+		when(myRequestDetails.getId()).thenReturn(new IdDt("Patient/123"));
+		when(myRequestDetails.getOperation()).thenReturn("_history");
+		assertEquals(MethodMatchEnum.NONE, binding.incomingServerRequestMatchesMethod(myRequestDetails));
+
+	}
+
+	@Test
+	public void testIncomingServerRequestNoMatch_HasCompartment() throws NoSuchMethodException {
+
+		class MyProvider {
+			@Read(version = false)
+			public IBaseResource read(@IdParam IIdType theIdType) {
+				return null;
+			}
+		}
+
+		when(myCtx.getResourceDefinition(any(Class.class))).thenReturn(definition);
+		when(definition.getName()).thenReturn("Patient");
+		when(myRequestDetails.getResourceName()).thenReturn("Patient");
+		when(myRequestDetails.getCompartmentName()).thenReturn("Patient");
+		when(myRequestDetails.getId()).thenReturn(new IdDt("Patient/123"));
+
+		ReadMethodBinding binding = createBinding(new MyProvider());
+		assertEquals(MethodMatchEnum.NONE, binding.incomingServerRequestMatchesMethod(myRequestDetails));
 	}
 
 	public ReadMethodBinding createBinding(Object theProvider) throws NoSuchMethodException {

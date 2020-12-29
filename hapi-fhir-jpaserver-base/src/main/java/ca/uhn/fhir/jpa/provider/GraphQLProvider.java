@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.provider;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,14 @@ package ca.uhn.fhir.jpa.provider;
 import ca.uhn.fhir.context.ConfigurationException;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.FhirVersionEnum;
-import ca.uhn.fhir.context.support.IContextValidationSupport;
+import ca.uhn.fhir.context.support.IValidationSupport;
 import ca.uhn.fhir.rest.annotation.GraphQL;
-import ca.uhn.fhir.rest.annotation.GraphQLQuery;
+import ca.uhn.fhir.rest.annotation.GraphQLQueryBody;
+import ca.uhn.fhir.rest.annotation.GraphQLQueryUrl;
 import ca.uhn.fhir.rest.annotation.IdParam;
 import ca.uhn.fhir.rest.annotation.Initialize;
+import ca.uhn.fhir.rest.annotation.ResourceParam;
+import ca.uhn.fhir.rest.api.RequestTypeEnum;
 import ca.uhn.fhir.rest.server.RestfulServer;
 import ca.uhn.fhir.rest.server.exceptions.BaseServerResponseException;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
@@ -35,8 +38,7 @@ import ca.uhn.fhir.rest.server.exceptions.UnclassifiedServerFailureException;
 import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.Validate;
-import org.hl7.fhir.dstu3.hapi.ctx.DefaultProfileValidationSupport;
-import org.hl7.fhir.dstu3.hapi.ctx.IValidationSupport;
+import ca.uhn.fhir.context.support.DefaultProfileValidationSupport;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
 import org.hl7.fhir.utilities.graphql.IGraphQLEngine;
@@ -71,28 +73,28 @@ public class GraphQLProvider {
 	 * @param theValidationSupport The HAPI Validation Support object, or null
 	 * @param theStorageServices   The storage services (this object will be used to retrieve various resources as required by the GraphQL engine)
 	 */
-	public GraphQLProvider(@Nonnull FhirContext theFhirContext, @Nullable IContextValidationSupport theValidationSupport, @Nonnull IGraphQLStorageServices theStorageServices) {
+	public GraphQLProvider(@Nonnull FhirContext theFhirContext, @Nullable IValidationSupport theValidationSupport, @Nonnull IGraphQLStorageServices theStorageServices) {
 		Validate.notNull(theFhirContext, "theFhirContext must not be null");
 		Validate.notNull(theStorageServices, "theStorageServices must not be null");
 
 		switch (theFhirContext.getVersion().getVersion()) {
 			case DSTU3: {
-				IValidationSupport validationSupport = (IValidationSupport) theValidationSupport;
-				validationSupport = ObjectUtils.defaultIfNull(validationSupport, new org.hl7.fhir.dstu3.hapi.ctx.DefaultProfileValidationSupport());
+				IValidationSupport validationSupport = theValidationSupport;
+				validationSupport = ObjectUtils.defaultIfNull(validationSupport, new DefaultProfileValidationSupport(theFhirContext));
 				org.hl7.fhir.dstu3.hapi.ctx.HapiWorkerContext workerContext = new org.hl7.fhir.dstu3.hapi.ctx.HapiWorkerContext(theFhirContext, validationSupport);
 				engineFactory = () -> new org.hl7.fhir.dstu3.utils.GraphQLEngine(workerContext);
 				break;
 			}
 			case R4: {
-				org.hl7.fhir.r4.hapi.ctx.IValidationSupport validationSupport = (org.hl7.fhir.r4.hapi.ctx.IValidationSupport) theValidationSupport;
-				validationSupport = ObjectUtils.defaultIfNull(validationSupport, new org.hl7.fhir.r4.hapi.ctx.DefaultProfileValidationSupport());
+				IValidationSupport validationSupport = theValidationSupport;
+				validationSupport = ObjectUtils.defaultIfNull(validationSupport, new DefaultProfileValidationSupport(theFhirContext));
 				org.hl7.fhir.r4.hapi.ctx.HapiWorkerContext workerContext = new org.hl7.fhir.r4.hapi.ctx.HapiWorkerContext(theFhirContext, validationSupport);
 				engineFactory = () -> new org.hl7.fhir.r4.utils.GraphQLEngine(workerContext);
 				break;
 			}
 			case R5: {
-				org.hl7.fhir.r5.hapi.ctx.IValidationSupport validationSupport = (org.hl7.fhir.r5.hapi.ctx.IValidationSupport) theValidationSupport;
-				validationSupport = ObjectUtils.defaultIfNull(validationSupport, new org.hl7.fhir.r5.hapi.ctx.DefaultProfileValidationSupport());
+				IValidationSupport validationSupport = theValidationSupport;
+				validationSupport = ObjectUtils.defaultIfNull(validationSupport, new DefaultProfileValidationSupport(theFhirContext));
 				org.hl7.fhir.r5.hapi.ctx.HapiWorkerContext workerContext = new org.hl7.fhir.r5.hapi.ctx.HapiWorkerContext(theFhirContext, validationSupport);
 				engineFactory = () -> new org.hl7.fhir.r5.utils.GraphQLEngine(workerContext);
 				break;
@@ -108,9 +110,23 @@ public class GraphQLProvider {
 		myStorageServices = theStorageServices;
 	}
 
-	@GraphQL
-	public String processGraphQlRequest(ServletRequestDetails theRequestDetails, @IdParam IIdType theId, @GraphQLQuery String theQuery) {
+	@GraphQL(type=RequestTypeEnum.GET)
+	public String processGraphQlGetRequest(ServletRequestDetails theRequestDetails, @IdParam IIdType theId, @GraphQLQueryUrl String queryUrl) {
+		if (queryUrl != null) {
+			return processGraphQLRequest(theRequestDetails, theId, queryUrl);
+		}
+		throw new InvalidRequestException("Unable to parse empty GraphQL expression");
+	}
 
+	@GraphQL(type=RequestTypeEnum.POST)
+	public String processGraphQlPostRequest(ServletRequestDetails theRequestDetails, @IdParam IIdType theId, @GraphQLQueryBody String queryBody) {
+		if (queryBody != null) {
+			return processGraphQLRequest(theRequestDetails, theId, queryBody);
+		}
+		throw new InvalidRequestException("Unable to parse empty GraphQL expression");
+	}
+
+	public String processGraphQLRequest(ServletRequestDetails theRequestDetails, IIdType theId, String theQuery) {
 		IGraphQLEngine engine = engineFactory.get();
 		engine.setAppInfo(theRequestDetails);
 		engine.setServices(myStorageServices);

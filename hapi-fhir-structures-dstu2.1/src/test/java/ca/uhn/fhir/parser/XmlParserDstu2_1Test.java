@@ -8,7 +8,6 @@ import ca.uhn.fhir.parser.FooMessageHeaderWithExplicitField.FooMessageSourceComp
 import ca.uhn.fhir.parser.IParserErrorHandler.IParseLocation;
 import ca.uhn.fhir.parser.PatientWithCustomCompositeExtension.FooParentExtension;
 import ca.uhn.fhir.rest.api.Constants;
-import ca.uhn.fhir.rest.client.api.IGenericClient;
 import ca.uhn.fhir.util.TestUtil;
 import com.google.common.collect.Sets;
 import org.apache.commons.io.IOUtils;
@@ -29,7 +28,10 @@ import org.hl7.fhir.dstu2016may.model.Observation.ObservationRelationshipType;
 import org.hl7.fhir.dstu2016may.model.Observation.ObservationStatus;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
-import org.junit.*;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.xmlunit.builder.DiffBuilder;
 import org.xmlunit.builder.Input;
@@ -40,19 +42,35 @@ import org.xmlunit.diff.ElementSelectors;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.UUID;
 
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
-import static org.mockito.Matchers.any;
-import static org.mockito.Mockito.*;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.stringContainsInOrder;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.nullable;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 public class XmlParserDstu2_1Test {
 	private static FhirContext ourCtx = FhirContext.forDstu2_1();
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(XmlParserDstu2_1Test.class);
 
-	@After
+	@AfterEach
 	public void after() {
 		if (ourCtx == null) {
 			ourCtx = FhirContext.forDstu2_1();
@@ -373,7 +391,7 @@ public class XmlParserDstu2_1Test {
 
 		// And re-encode once more, with the references cleared
 		patient.getContained().clear();
-		patient.getManagingOrganization().setReference((String) null);
+		patient.getManagingOrganization().setReference(null);
 		encoded = xmlParser.encodeResourceToString(patient);
 		ourLog.info(encoded);
 		assertThat(encoded, stringContainsInOrder(Arrays.asList("<contained>", "<Organization ", "<id value=\"1\"/>", "</Organization", "</contained>", "<reference value=\"#1\"/>")));
@@ -382,7 +400,7 @@ public class XmlParserDstu2_1Test {
 
 		// And re-encode once more, with the references cleared and a manually set local ID
 		patient.getContained().clear();
-		patient.getManagingOrganization().setReference((String) null);
+		patient.getManagingOrganization().setReference(null);
 		patient.getManagingOrganization().getResource().setId(("#333"));
 		encoded = xmlParser.encodeResourceToString(patient);
 		ourLog.info(encoded);
@@ -612,8 +630,7 @@ public class XmlParserDstu2_1Test {
 		String out = xmlParser.encodeResourceToString(patient);
 		ourLog.info(out);
 
-		//@formatter:off
-		assertThat(out, stringContainsInOrder("<identifier>", 
+		assertThat(out, stringContainsInOrder("<identifier>",
 				"<type>",
 				"<coding>",
 				"<system value=\"http://hl7.org/fhir/v2/0203\"/>", 
@@ -623,7 +640,6 @@ public class XmlParserDstu2_1Test {
 				"<system value=\"SYS\"/>", 
 				"<value value=\"VAL\"/>", 
 				"</identifier>"));
-		//@formatter:on
 
 		patient = ourCtx.newXmlParser().parseResource(Patient.class, out);
 		assertEquals("http://hl7.org/fhir/v2/0203", patient.getIdentifier().get(0).getType().getCoding().get(0).getSystem());
@@ -643,120 +659,6 @@ public class XmlParserDstu2_1Test {
 
 		mo = ourCtx.newXmlParser().parseResource(MedicationOrder.class, encoded);
 		assertEquals("2015-10-05", mo.getDateWrittenElement().getValueAsString());
-	}
-
-	@Test
-	public void testEncodeAndParseMetaProfileAndTags() {
-		Patient p = new Patient();
-		p.addName().addFamily("FAMILY");
-
-		p.getMeta().addProfile("http://foo/Profile1");
-		p.getMeta().addProfile("http://foo/Profile2");
-
-		p.getMeta().addTag().setSystem("scheme1").setCode("term1").setDisplay("label1");
-		p.getMeta().addTag().setSystem("scheme2").setCode("term2").setDisplay("label2");
-
-		p.getMeta().addSecurity().setSystem("sec_scheme1").setCode("sec_term1").setDisplay("sec_label1");
-		p.getMeta().addSecurity().setSystem("sec_scheme2").setCode("sec_term2").setDisplay("sec_label2");
-
-		String enc = ourCtx.newXmlParser().setPrettyPrint(true).encodeResourceToString(p);
-		ourLog.info(enc);
-
-		//@formatter:off
-		assertThat(enc, stringContainsInOrder("<Patient xmlns=\"http://hl7.org/fhir\">", 
-			"<meta>",
-			"<meta>",
-			"<profile value=\"http://foo/Profile1\"/>",
-			"<profile value=\"http://foo/Profile2\"/>",
-			"<tag>",
-			"<system value=\"scheme1\"/>",
-			"<code value=\"term1\"/>",
-			"<display value=\"label1\"/>",
-			"</tag>",
-			"<tag>",
-			"<system value=\"scheme2\"/>",
-			"<code value=\"term2\"/>",
-			"<display value=\"label2\"/>",
-			"</tag>",
-			"</meta>",
-			"</meta>",
-			"<name>",
-			"<family value=\"FAMILY\"/>",
-			"</name>", 
-			"</Patient>"));
-		//@formatter:on
-
-		Patient parsed = ourCtx.newXmlParser().parseResource(Patient.class, enc);
-		List<UriType> gotLabels = parsed.getMeta().getProfile();
-		assertEquals(2, gotLabels.size());
-		UriType label = gotLabels.get(0);
-		assertEquals("http://foo/Profile1", label.getValue());
-		label = gotLabels.get(1);
-		assertEquals("http://foo/Profile2", label.getValue());
-
-		List<Coding> tagList = parsed.getMeta().getTag();
-		assertEquals(2, tagList.size());
-		assertEquals("scheme1", tagList.get(0).getSystem());
-		assertEquals("term1", tagList.get(0).getCode());
-		assertEquals("label1", tagList.get(0).getDisplay());
-		assertEquals("scheme2", tagList.get(1).getSystem());
-		assertEquals("term2", tagList.get(1).getCode());
-		assertEquals("label2", tagList.get(1).getDisplay());
-
-		tagList = parsed.getMeta().getSecurity();
-		assertEquals(2, tagList.size());
-		assertEquals("sec_scheme1", tagList.get(0).getSystem());
-		assertEquals("sec_term1", tagList.get(0).getCode());
-		assertEquals("sec_label1", tagList.get(0).getDisplay());
-		assertEquals("sec_scheme2", tagList.get(1).getSystem());
-		assertEquals("sec_term2", tagList.get(1).getCode());
-		assertEquals("sec_label2", tagList.get(1).getDisplay());
-	}
-
-	@Test
-	public void testEncodeAndParseMetaProfiles() {
-		Patient p = new Patient();
-		p.addName().addFamily("FAMILY");
-
-		p.getMeta().addTag().setSystem("scheme1").setCode("term1").setDisplay("label1");
-		p.getMeta().addTag().setSystem("scheme2").setCode("term2").setDisplay("label2");
-
-		String enc = ourCtx.newXmlParser().setPrettyPrint(true).encodeResourceToString(p);
-		ourLog.info(enc);
-
-		//@formatter:off
-		assertThat(enc, stringContainsInOrder("<Patient xmlns=\"http://hl7.org/fhir\">", 
-			"<meta>",
-			"<meta>",
-			"<tag>",
-			"<system value=\"scheme1\"/>",
-			"<code value=\"term1\"/>",
-			"<display value=\"label1\"/>",
-			"</tag>",
-			"<tag>",
-			"<system value=\"scheme2\"/>",
-			"<code value=\"term2\"/>",
-			"<display value=\"label2\"/>",
-			"</tag>",
-			"</meta>",
-			"</meta>",
-			"<name>",
-			"<family value=\"FAMILY\"/>",
-			"</name>", 
-			"</Patient>"));
-		//@formatter:on
-
-		Patient parsed = ourCtx.newXmlParser().parseResource(Patient.class, enc);
-		assertThat(parsed.getMeta().getProfile(), empty());
-
-		List<Coding> tagList = parsed.getMeta().getTag();
-		assertEquals(2, tagList.size());
-		assertEquals("scheme1", tagList.get(0).getSystem());
-		assertEquals("term1", tagList.get(0).getCode());
-		assertEquals("label1", tagList.get(0).getDisplay());
-		assertEquals("scheme2", tagList.get(1).getSystem());
-		assertEquals("term2", tagList.get(1).getCode());
-		assertEquals("label2", tagList.get(1).getDisplay());
 	}
 
 	/**
@@ -946,7 +848,7 @@ public class XmlParserDstu2_1Test {
 		// Adding medication to Contained.
 		Medication medResource = new Medication();
 		medResource.setCode(codeDt);
-		medResource.setId("#" + String.valueOf(medId));
+		medResource.setId("#" + medId);
 		medicationPrescript.getContained().add(medResource);
 
 		// Medication reference. This should point to the contained resource.
@@ -1015,7 +917,7 @@ public class XmlParserDstu2_1Test {
 		// Adding medication to Contained.
 		Medication medResource = new Medication();
 		medResource.setCode(codeDt);
-		medResource.setId(String.valueOf(medId)); // ID does not start with '#'
+		medResource.setId(medId); // ID does not start with '#'
 		medicationPrescript.getContained().add(medResource);
 
 		// Medication reference. This should point to the contained resource.
@@ -1771,7 +1673,7 @@ public class XmlParserDstu2_1Test {
 	}
 
 	@Test
-	@Ignore
+	@Disabled
 	public void testParseAndEncodeBundle() throws Exception {
 		String content = IOUtils.toString(XmlParserDstu2_1Test.class.getResourceAsStream("/bundle-example.xml"), StandardCharsets.UTF_8);
 
@@ -1806,7 +1708,7 @@ public class XmlParserDstu2_1Test {
 	}
 
 	@Test
-	@Ignore
+	@Disabled
 	public void testParseAndEncodeBundleNewStyle() throws Exception {
 		String content = IOUtils.toString(XmlParserDstu2_1Test.class.getResourceAsStream("/bundle-example.xml"), StandardCharsets.UTF_8);
 
@@ -1996,41 +1898,27 @@ public class XmlParserDstu2_1Test {
 
 		assertThat(output, stringContainsInOrder(
 			"{", 
-			"  \"resourceType\": \"Patient\",", 
-			"  \"id\": \"someid\",", 
-			"  \"_id\": {", 
-			"    \"fhir_comments\": [", 
-			"      \" comment 1 \"", 
-			"    ]", 
-			"  },", 
-			"  \"extension\": [", 
-			"    {", 
-			"      \"fhir_comments\": [", 
-			"        \" comment 2 \",", 
-			"        \" comment 7 \"", 
-			"      ],", 
-			"      \"url\": \"urn:patientext:att\",", 
-			"      \"valueAttachment\": {", 
-			"        \"fhir_comments\": [", 
-			"          \" comment 3 \",", 
-			"          \" comment 6 \"", 
-			"        ],", 
-			"        \"contentType\": \"aaaa\",", 
-			"        \"_contentType\": {", 
-			"          \"fhir_comments\": [", 
-			"            \" comment 4 \"", 
-			"          ]", 
-			"        },", 
-			"        \"data\": \"AAAA\",", 
-			"        \"_data\": {", 
-			"          \"fhir_comments\": [", 
-			"            \" comment 5 \"", 
-			"          ]", 
-			"        }", 
-			"      }", 
-			"    }", 
-			"  ]", 
-			"}" 
+				"  \"resourceType\": \"Patient\",", 
+				"  \"id\": \"someid\",", 
+				"  \"_id\": {", 
+				"    \"fhir_comments\": [ \" comment 1 \" ]", 
+				"  },", 
+				"  \"extension\": [ {", 
+				"    \"fhir_comments\": [ \" comment 2 \", \" comment 7 \" ],", 
+				"    \"url\": \"urn:patientext:att\",", 
+				"    \"valueAttachment\": {", 
+				"      \"fhir_comments\": [ \" comment 3 \", \" comment 6 \" ],", 
+				"      \"contentType\": \"aaaa\",", 
+				"      \"_contentType\": {", 
+				"        \"fhir_comments\": [ \" comment 4 \" ]", 
+				"      },", 
+				"      \"data\": \"AAAA\",", 
+				"      \"_data\": {", 
+				"        \"fhir_comments\": [ \" comment 5 \" ]", 
+				"      }", 
+				"    }", 
+				"  } ]", 
+				"}"
 		));
 		
 		//@formatter:on
@@ -2244,7 +2132,7 @@ public class XmlParserDstu2_1Test {
 	 * see #144 and #146
 	 */
 	@Test
-	@Ignore
+	@Disabled
 	public void testParseContained() {
 
 		FhirContext c = FhirContext.forDstu2_1();
@@ -2371,9 +2259,14 @@ public class XmlParserDstu2_1Test {
 	/**
 	 * See #342
 	 */
-	@Test(expected = DataFormatException.class)
+	@Test
 	public void testParseInvalid() {
-		ourCtx.newXmlParser().parseResource("FOO");
+		try {
+			ourCtx.newXmlParser().parseResource("FOO");
+			fail();
+		} catch (DataFormatException e) {
+			// good
+		}
 	}
 
 	/**
@@ -2393,7 +2286,7 @@ public class XmlParserDstu2_1Test {
 			p.parseResource(resource);
 			fail();
 		} catch (DataFormatException e) {
-			assertEquals("DataFormatException at [[row,col {unknown-source}]: [2,4]]: Invalid attribute value \"1\": Invalid boolean string: '1'", e.getMessage());
+			assertEquals("DataFormatException at [[row,col {unknown-source}]: [2,4]]: [element=\"active\"] Invalid attribute value \"1\": Invalid boolean string: '1'", e.getMessage());
 		}
 		
 		LenientErrorHandler errorHandler = new LenientErrorHandler();
@@ -2524,7 +2417,7 @@ public class XmlParserDstu2_1Test {
 
 	// TODO: this should work
 	@Test
-	@Ignore
+	@Disabled
 	public void testParseNarrative() throws Exception {
 		//@formatter:off
 		String htmlNoNs = "<div>AAA<b>BBB</b>CCC</div>";
@@ -2678,11 +2571,11 @@ public class XmlParserDstu2_1Test {
 		fhirPat = parser.parseResource(Patient.class, output);
 
 		List<Extension> extlst = fhirPat.getExtensionsByUrl("x1");
-		Assert.assertEquals(1, extlst.size());
-		Assert.assertEquals(refVal, ((Reference) extlst.get(0).getValue()).getReference());
+		assertEquals(1, extlst.size());
+		assertEquals(refVal, ((Reference) extlst.get(0).getValue()).getReference());
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void afterClassClearContext() {
 		TestUtil.clearAllStaticFieldsForUnitTest();
 	}
@@ -2697,7 +2590,7 @@ public class XmlParserDstu2_1Test {
 				.withComparisonController(ComparisonControllers.Default)
 				.build();
 
-		assertTrue(d.toString(), !d.hasDifferences());
+		assertTrue(!d.hasDifferences(), d.toString());
 	}
 
 	@ResourceDef(name = "Patient")

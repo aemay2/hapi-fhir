@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.binstore;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ package ca.uhn.fhir.jpa.binstore;
  * #L%
  */
 
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
 import ca.uhn.fhir.jpa.dao.data.IBinaryStorageEntityDao;
 import ca.uhn.fhir.jpa.model.entity.BinaryStorageEntity;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
@@ -55,10 +56,19 @@ public class DatabaseBlobBinaryStorageSvcImpl extends BaseBinaryStorageSvcImpl {
 	private IBinaryStorageEntityDao myBinaryStorageEntityDao;
 	@Autowired
 	private PlatformTransactionManager myPlatformTransactionManager;
+	@Autowired
+	private DaoConfig myDaoConfig;
 
 	@Override
-	@Transactional(Transactional.TxType.SUPPORTS)
-	public StoredDetails storeBlob(IIdType theResourceId, String theBlobIdOrNull, String theContentType, InputStream theInputStream) {
+	@Transactional(Transactional.TxType.REQUIRED)
+	public StoredDetails storeBlob(IIdType theResourceId, String theBlobIdOrNull, String theContentType, InputStream theInputStream) throws IOException {
+
+		/*
+		 * Note on transactionality: This method used to have a propagation value of SUPPORTS and then do the actual
+		 * write in a new transaction.. I don't actually get why that was the original design, but it causes
+		 * connection pool deadlocks under load!
+		 */
+
 		Date publishedDate = new Date();
 
 		HashingInputStream hashingInputStream = createHashingInputStream(theInputStream);
@@ -74,26 +84,18 @@ public class DatabaseBlobBinaryStorageSvcImpl extends BaseBinaryStorageSvcImpl {
 
 		Session session = (Session) myEntityManager.getDelegate();
 		LobHelper lobHelper = session.getLobHelper();
-		Blob dataBlob = lobHelper.createBlob(countingInputStream, 0);
+		byte[] loadedStream = IOUtils.toByteArray(countingInputStream);
+		Blob dataBlob = lobHelper.createBlob(loadedStream);
 		entity.setBlob(dataBlob);
-
-		// Save the entity
-
-		TransactionTemplate txTemplate = new TransactionTemplate(myPlatformTransactionManager);
-		txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-		txTemplate.execute(t -> {
-			myEntityManager.persist(entity);
-			return null;
-		});
 
 		// Update the entity with the final byte count and hash
 		long bytes = countingInputStream.getCount();
 		String hash = hashingInputStream.hash().toString();
-		txTemplate.execute(t -> {
-			myBinaryStorageEntityDao.setSize(id, (int) bytes);
-			myBinaryStorageEntityDao.setHash(id, hash);
-			return null;
-		});
+		entity.setSize((int) bytes);
+		entity.setHash(hash);
+
+		// Save the entity
+		myEntityManager.persist(entity);
 
 		return new StoredDetails()
 			.setBlobId(id)
@@ -135,7 +137,7 @@ public class DatabaseBlobBinaryStorageSvcImpl extends BaseBinaryStorageSvcImpl {
 	@Override
 	public void expungeBlob(IIdType theResourceId, String theBlobId) {
 		Optional<BinaryStorageEntity> entityOpt = myBinaryStorageEntityDao.findByIdAndResourceId(theBlobId, theResourceId.toUnqualifiedVersionless().getValue());
-		entityOpt.ifPresent(theBinaryStorageEntity -> myBinaryStorageEntityDao.delete(theBinaryStorageEntity));
+		entityOpt.ifPresent(theBinaryStorageEntity -> myBinaryStorageEntityDao.deleteByPid(theBinaryStorageEntity.getBlobId()));
 	}
 
 	@Override

@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.term.loinc;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -67,9 +67,15 @@ public enum LoincUploadPropertiesEnum {
 	// Part
 	LOINC_PART_FILE("loinc.part.file"),
 	LOINC_PART_FILE_DEFAULT("AccessoryFiles/PartFile/Part.csv"),
+
 	// Part link
 	LOINC_PART_LINK_FILE("loinc.part.link.file"),
 	LOINC_PART_LINK_FILE_DEFAULT("AccessoryFiles/PartFile/LoincPartLink.csv"),
+	LOINC_PART_LINK_FILE_PRIMARY("loinc.part.link.primary.file"),
+	LOINC_PART_LINK_FILE_PRIMARY_DEFAULT("AccessoryFiles/PartFile/LoincPartLink_Primary.csv"),
+	LOINC_PART_LINK_FILE_SUPPLEMENTARY("loinc.part.link.supplementary.file"),
+	LOINC_PART_LINK_FILE_SUPPLEMENTARY_DEFAULT("AccessoryFiles/PartFile/LoincPartLink_Supplementary.csv"),
+
 	// Part related code mapping
 	LOINC_PART_RELATED_CODE_MAPPING_FILE("loinc.part.related.code.mapping.file"),
 	LOINC_PART_RELATED_CODE_MAPPING_FILE_DEFAULT("AccessoryFiles/PartFile/PartRelatedCodeMapping.csv"),
@@ -92,6 +98,9 @@ public enum LoincUploadPropertiesEnum {
 	/*
 	 * OPTIONAL
 	 */
+	// This is the version identifier for the LOINC code system
+	LOINC_CODESYSTEM_VERSION("loinc.codesystem.version"),
+
 	// This is the version identifier for the answer list file
 	LOINC_ANSWERLIST_VERSION("loinc.answerlist.version"),
 

@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.search.cache;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,10 +20,10 @@ package ca.uhn.fhir.jpa.search.cache;
  * #L%
  */
 
+import ca.uhn.fhir.interceptor.model.RequestPartitionId;
 import ca.uhn.fhir.jpa.entity.Search;
 
-import java.util.Collection;
-import java.util.Date;
+import java.time.Instant;
 import java.util.Optional;
 
 public interface ISearchCacheSvc {
@@ -65,32 +65,18 @@ public interface ISearchCacheSvc {
 	/**
 	 * Look for any existing searches matching the given resource type and query string.
 	 * <p>
-	 * This method is allowed to perofrm a "best effort" return, so it can return searches that don't match the query string exactly, or
+	 * This method is allowed to perform a "best effort" return, so it can return searches that don't match the query string exactly, or
 	 * which have a created timestamp before <code>theCreatedAfter</code> date. The caller is responsible for removing
 	 * any inappropriate Searches and picking the most relevant one.
 	 * </p>
 	 *
 	 * @param theResourceType The resource type of the search. Results MUST match this type
 	 * @param theQueryString  The query string. Results SHOULD match this type
-	 * @param theQueryStringHash The query string hash. Results SHOULD match this type
 	 * @param theCreatedAfter Results SHOULD not include any searches created before this cutoff timestamp
+	 * @param theRequestPartitionId Search should examine only the requested partitions. Cache MUST not return results matching the given partition IDs
 	 * @return A collection of candidate searches
 	 */
-	Collection<Search> findCandidatesForReuse(String theResourceType, String theQueryString, int theQueryStringHash, Date theCreatedAfter);
-
-	/**
-	 * Mark a search as having been "last used" at the given time. This method may (and probably should) be implemented
-	 * to work asynchronously in order to avoid hammering the database if the search gets reused many times.
-	 *
-	 * @param theSearch The search
-	 * @param theDate   The "last returned" timestamp
-	 */
-	void updateSearchLastReturned(Search theSearch, Date theDate);
-
-	/**
-	 * This is mostly public for unit tests
-	 */
-	void flushLastUpdated();
+	Optional<Search> findCandidatesForReuse(String theResourceType, String theQueryString, Instant theCreatedAfter, RequestPartitionId theRequestPartitionId);
 
 	/**
 	 * This method will be called periodically to delete stale searches. Implementations are not required to do anything

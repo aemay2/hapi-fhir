@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.dao.expunge;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,14 +23,30 @@ package ca.uhn.fhir.jpa.dao.expunge;
 import ca.uhn.fhir.interceptor.api.HookParams;
 import ca.uhn.fhir.interceptor.api.IInterceptorBroadcaster;
 import ca.uhn.fhir.interceptor.api.Pointcut;
-import ca.uhn.fhir.jpa.dao.DaoRegistry;
-import ca.uhn.fhir.jpa.dao.IFhirResourceDao;
-import ca.uhn.fhir.jpa.dao.data.*;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
+import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceHistoryTableDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceHistoryTagDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceIndexedCompositeStringUniqueDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceIndexedSearchParamCoordsDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceIndexedSearchParamDateDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceIndexedSearchParamNumberDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceIndexedSearchParamQuantityDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceIndexedSearchParamStringDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceIndexedSearchParamTokenDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceIndexedSearchParamUriDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceLinkDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceProvenanceDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceTableDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceTagDao;
+import ca.uhn.fhir.jpa.dao.data.ISearchParamPresentDao;
 import ca.uhn.fhir.jpa.dao.index.IdHelperService;
 import ca.uhn.fhir.jpa.model.entity.ForcedId;
 import ca.uhn.fhir.jpa.model.entity.ResourceHistoryTable;
 import ca.uhn.fhir.jpa.model.entity.ResourceTable;
 import ca.uhn.fhir.jpa.util.JpaInterceptorBroadcaster;
+import ca.uhn.fhir.jpa.util.MemoryCacheService;
 import ca.uhn.fhir.model.primitive.IdDt;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
@@ -45,14 +61,18 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.SliceImpl;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationAdapter;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
-class ResourceExpungeService implements IResourceExpungeService {
+public class ResourceExpungeService implements IResourceExpungeService {
 	private static final Logger ourLog = LoggerFactory.getLogger(ResourceExpungeService.class);
 
 	@Autowired
@@ -74,6 +94,8 @@ class ResourceExpungeService implements IResourceExpungeService {
 	@Autowired
 	private IResourceIndexedSearchParamNumberDao myResourceIndexedSearchParamNumberDao;
 	@Autowired
+	private IResourceIndexedCompositeStringUniqueDao myResourceIndexedCompositeStringUniqueDao;
+	@Autowired
 	private IResourceLinkDao myResourceLinkDao;
 	@Autowired
 	private IResourceTagDao myResourceTagDao;
@@ -87,6 +109,12 @@ class ResourceExpungeService implements IResourceExpungeService {
 	private DaoRegistry myDaoRegistry;
 	@Autowired
 	private IResourceProvenanceDao myResourceHistoryProvenanceTableDao;
+	@Autowired
+	private ISearchParamPresentDao mySearchParamPresentDao;
+	@Autowired
+	private DaoConfig myDaoConfig;
+	@Autowired
+	private MemoryCacheService myMemoryCacheService;
 
 	@Override
 	@Transactional
@@ -137,6 +165,20 @@ class ResourceExpungeService implements IResourceExpungeService {
 				return;
 			}
 		}
+
+		/*
+		 * Once this transaction is committed, we will invalidate all memory caches
+		 * in order to avoid any caches having references to things that no longer
+		 * exist. This is a pretty brute-force way of addressing this, and could probably
+		 * be optimized, but expunge is hopefully not frequently called on busy servers
+		 * so it shouldn't be too big a deal.
+		 */
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
+			@Override
+			public void afterCommit() {
+				myMemoryCacheService.invalidateAllCaches();
+			}
+		});
 	}
 
 	private void expungeHistoricalVersion(RequestDetails theRequestDetails, Long theNextVersionId, AtomicInteger theRemainingCount) {
@@ -147,11 +189,11 @@ class ResourceExpungeService implements IResourceExpungeService {
 		callHooks(theRequestDetails, theRemainingCount, version, id);
 
 		if (version.getProvenance() != null) {
-			myResourceHistoryProvenanceTableDao.delete(version.getProvenance());
+			myResourceHistoryProvenanceTableDao.deleteByPid(version.getProvenance().getId());
 		}
-		
-		myResourceHistoryTagDao.deleteAll(version.getTags());
-		myResourceHistoryTableDao.delete(version);
+
+		myResourceHistoryTagDao.deleteByPid(version.getId());
+		myResourceHistoryTableDao.deleteByPid(version.getId());
 
 		theRemainingCount.decrementAndGet();
 	}
@@ -159,7 +201,7 @@ class ResourceExpungeService implements IResourceExpungeService {
 	private void callHooks(RequestDetails theRequestDetails, AtomicInteger theRemainingCount, ResourceHistoryTable theVersion, IdDt theId) {
 		final AtomicInteger counter = new AtomicInteger();
 		if (JpaInterceptorBroadcaster.hasHooks(Pointcut.STORAGE_PRESTORAGE_EXPUNGE_RESOURCE, myInterceptorBroadcaster, theRequestDetails)) {
-			IFhirResourceDao resourceDao = myDaoRegistry.getResourceDao(theId.getResourceType());
+			IFhirResourceDao<?> resourceDao = myDaoRegistry.getResourceDao(theId.getResourceType());
 			IBaseResource resource = resourceDao.toResource(theVersion, false);
 			HookParams params = new HookParams()
 				.add(AtomicInteger.class, counter)
@@ -171,7 +213,6 @@ class ResourceExpungeService implements IResourceExpungeService {
 		}
 		theRemainingCount.addAndGet(-1 * counter.get());
 	}
-
 
 	@Override
 	@Transactional
@@ -215,22 +256,48 @@ class ResourceExpungeService implements IResourceExpungeService {
 			myIdHelperService.delete(forcedId);
 		}
 
-		myResourceTableDao.delete(resource);
+		myResourceTableDao.deleteByPid(resource.getId());
 	}
 
 	@Override
 	@Transactional
 	public void deleteAllSearchParams(Long theResourceId) {
-		myResourceIndexedSearchParamUriDao.deleteByResourceId(theResourceId);
-		myResourceIndexedSearchParamCoordsDao.deleteByResourceId(theResourceId);
-		myResourceIndexedSearchParamDateDao.deleteByResourceId(theResourceId);
-		myResourceIndexedSearchParamNumberDao.deleteByResourceId(theResourceId);
-		myResourceIndexedSearchParamQuantityDao.deleteByResourceId(theResourceId);
-		myResourceIndexedSearchParamStringDao.deleteByResourceId(theResourceId);
-		myResourceIndexedSearchParamTokenDao.deleteByResourceId(theResourceId);
-		myResourceLinkDao.deleteByResourceId(theResourceId);
+		ResourceTable resource = myResourceTableDao.findById(theResourceId).orElse(null);
 
-		myResourceTagDao.deleteByResourceId(theResourceId);
+		if (resource == null || resource.isParamsUriPopulated()) {
+			myResourceIndexedSearchParamUriDao.deleteByResourceId(theResourceId);
+		}
+		if (resource == null || resource.isParamsCoordsPopulated()) {
+			myResourceIndexedSearchParamCoordsDao.deleteByResourceId(theResourceId);
+		}
+		if (resource == null || resource.isParamsDatePopulated()) {
+			myResourceIndexedSearchParamDateDao.deleteByResourceId(theResourceId);
+		}
+		if (resource == null || resource.isParamsNumberPopulated()) {
+			myResourceIndexedSearchParamNumberDao.deleteByResourceId(theResourceId);
+		}
+		if (resource == null || resource.isParamsQuantityPopulated()) {
+			myResourceIndexedSearchParamQuantityDao.deleteByResourceId(theResourceId);
+		}
+		if (resource == null || resource.isParamsStringPopulated()) {
+			myResourceIndexedSearchParamStringDao.deleteByResourceId(theResourceId);
+		}
+		if (resource == null || resource.isParamsTokenPopulated()) {
+			myResourceIndexedSearchParamTokenDao.deleteByResourceId(theResourceId);
+		}
+		if (resource == null || resource.isParamsCompositeStringUniquePresent()) {
+			myResourceIndexedCompositeStringUniqueDao.deleteByResourceId(theResourceId);
+		}
+		if (myDaoConfig.getIndexMissingFields() == DaoConfig.IndexEnabledEnum.ENABLED) {
+			mySearchParamPresentDao.deleteByResourceId(theResourceId);
+		}
+		if (resource == null || resource.isHasLinks()) {
+			myResourceLinkDao.deleteByResourceId(theResourceId);
+		}
+
+		if (resource == null || resource.isHasTags()) {
+			myResourceTagDao.deleteByResourceId(theResourceId);
+		}
 	}
 
 	private void expungeHistoricalVersionsOfId(RequestDetails theRequestDetails, Long myResourceId, AtomicInteger theRemainingCount) {

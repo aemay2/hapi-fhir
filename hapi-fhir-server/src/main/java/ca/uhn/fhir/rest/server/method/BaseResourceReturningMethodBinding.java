@@ -24,6 +24,7 @@ import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
 import ca.uhn.fhir.util.ReflectionUtil;
 import ca.uhn.fhir.util.UrlUtil;
+import org.hl7.fhir.instance.model.api.IBaseBundle;
 import org.hl7.fhir.instance.model.api.IBaseOperationOutcome;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IPrimitiveType;
@@ -42,7 +43,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -81,7 +82,8 @@ public abstract class BaseResourceReturningMethodBinding extends BaseMethodBindi
 			}
 
 		} else if (IBaseResource.class.isAssignableFrom(methodReturnType)) {
-			if (Modifier.isAbstract(methodReturnType.getModifiers()) == false && theContext.getResourceDefinition((Class<? extends IBaseResource>) methodReturnType).isBundle()) {
+
+			if ( IBaseBundle.class.isAssignableFrom(methodReturnType)) {
 				myMethodReturnType = MethodReturnTypeEnum.BUNDLE_RESOURCE;
 			} else {
 				myMethodReturnType = MethodReturnTypeEnum.RESOURCE;
@@ -115,13 +117,23 @@ public abstract class BaseResourceReturningMethodBinding extends BaseMethodBindi
 	IBaseResource createBundleFromBundleProvider(IRestfulServer<?> theServer, RequestDetails theRequest, Integer theLimit, String theLinkSelf, Set<Include> theIncludes,
 																IBundleProvider theResult, int theOffset, BundleTypeEnum theBundleType, EncodingEnum theLinkEncoding, String theSearchId) {
 		IVersionSpecificBundleFactory bundleFactory = theServer.getFhirContext().newBundleFactory();
+		final Integer requestOffset = RestfulServerUtils.tryToExtractNamedParameter(theRequest, Constants.PARAM_OFFSET);
 
 		int numToReturn;
 		String searchId = null;
 		List<IBaseResource> resourceList;
 		Integer numTotalResults = theResult.size();
-		if (theServer.getPagingProvider() == null) {
-			numToReturn = numTotalResults;
+
+		if (requestOffset != null || theServer.getPagingProvider() == null) {
+			if (theLimit != null) {
+				numToReturn = theLimit;
+			} else {
+				if (theServer.getDefaultPageSize() != null) {
+					numToReturn = theServer.getDefaultPageSize();
+				} else {
+					numToReturn = numTotalResults != null ? numTotalResults : Integer.MAX_VALUE;
+				}
+			}
 			if (numToReturn > 0) {
 				resourceList = theResult.getResources(0, numToReturn);
 			} else {
@@ -198,7 +210,18 @@ public abstract class BaseResourceReturningMethodBinding extends BaseMethodBindi
 		String linkPrev = null;
 		String linkNext = null;
 
-		if (isNotBlank(theResult.getCurrentPageId())) {
+		if (theServer.getPagingProvider() == null || requestOffset != null) {
+			int myOffset = requestOffset != null ? requestOffset : 0;
+			// Paging without caching
+			// We're doing requestOffset pages
+			if (numTotalResults == null || myOffset + numToReturn < numTotalResults) {
+				linkNext = (RestfulServerUtils.createOffsetPagingLink(serverBase, theRequest.getRequestPath(), theRequest.getTenantId(), myOffset + numToReturn, numToReturn, theRequest.getParameters()));
+			}
+			if (myOffset > 0) {
+				int start = Math.max(0, myOffset - numToReturn);
+				linkPrev = RestfulServerUtils.createOffsetPagingLink(serverBase, theRequest.getRequestPath(), theRequest.getTenantId(), start, numToReturn, theRequest.getParameters());
+			}
+		} else if (isNotBlank(theResult.getCurrentPageId())) {
 			// We're doing named pages
 			searchId = theResult.getUuid();
 			if (isNotBlank(theResult.getNextPageId())) {
@@ -219,8 +242,8 @@ public abstract class BaseResourceReturningMethodBinding extends BaseMethodBindi
 					linkNext = (RestfulServerUtils.createPagingLink(theIncludes, theRequest, searchId, theOffset + numToReturn, numToReturn, theRequest.getParameters(), prettyPrint, theBundleType));
 				}
 				if (theOffset > 0) {
-					int start = Math.max(0, theOffset - theLimit);
-					linkPrev = RestfulServerUtils.createPagingLink(theIncludes, theRequest, searchId, start, theLimit, theRequest.getParameters(), prettyPrint, theBundleType);
+				int start = Math.max(0, theOffset - numToReturn);
+					linkPrev = RestfulServerUtils.createPagingLink(theIncludes, theRequest, searchId, start, numToReturn, theRequest.getParameters(), prettyPrint, theBundleType);
 				}
 			}
 		}
@@ -258,37 +281,7 @@ public abstract class BaseResourceReturningMethodBinding extends BaseMethodBindi
 				 * Figure out the self-link for this request
 				 */
 				String serverBase = theRequest.getServerBaseForRequest();
-				String linkSelf;
-				StringBuilder b = new StringBuilder();
-				b.append(serverBase);
-
-				if (isNotBlank(theRequest.getRequestPath())) {
-					b.append('/');
-					if (isNotBlank(theRequest.getTenantId()) && theRequest.getRequestPath().startsWith(theRequest.getTenantId() + "/")) {
-						b.append(theRequest.getRequestPath().substring(theRequest.getTenantId().length() + 1));
-					} else {
-						b.append(theRequest.getRequestPath());
-					}
-				}
-				// For POST the URL parameters get jumbled with the post body parameters so don't include them, they might be huge
-				if (theRequest.getRequestType() == RequestTypeEnum.GET) {
-					boolean first = true;
-					Map<String, String[]> parameters = theRequest.getParameters();
-					for (String nextParamName : new TreeSet<>(parameters.keySet())) {
-						for (String nextParamValue : parameters.get(nextParamName)) {
-							if (first) {
-								b.append('?');
-								first = false;
-							} else {
-								b.append('&');
-							}
-							b.append(UrlUtil.escapeUrlParam(nextParamName));
-							b.append('=');
-							b.append(UrlUtil.escapeUrlParam(nextParamValue));
-						}
-					}
-				}
-				linkSelf = b.toString();
+				String linkSelf = RestfulServerUtils.createLinkSelf(theRequest.getFhirServerBase(), theRequest);
 
 				if (getMethodReturnType() == MethodReturnTypeEnum.BUNDLE_RESOURCE) {
 					IBaseResource resource;

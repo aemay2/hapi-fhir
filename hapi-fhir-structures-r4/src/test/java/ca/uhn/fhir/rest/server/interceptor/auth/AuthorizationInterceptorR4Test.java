@@ -6,10 +6,32 @@ import ca.uhn.fhir.interceptor.api.HookParams;
 import ca.uhn.fhir.interceptor.api.IInterceptorBroadcaster;
 import ca.uhn.fhir.interceptor.api.Pointcut;
 import ca.uhn.fhir.model.primitive.IdDt;
-import ca.uhn.fhir.rest.annotation.*;
+import ca.uhn.fhir.rest.annotation.ConditionalUrlParam;
+import ca.uhn.fhir.rest.annotation.Create;
+import ca.uhn.fhir.rest.annotation.Delete;
+import ca.uhn.fhir.rest.annotation.GraphQL;
+import ca.uhn.fhir.rest.annotation.GraphQLQueryUrl;
+import ca.uhn.fhir.rest.annotation.History;
+import ca.uhn.fhir.rest.annotation.IdParam;
+import ca.uhn.fhir.rest.annotation.Operation;
+import ca.uhn.fhir.rest.annotation.OperationParam;
+import ca.uhn.fhir.rest.annotation.OptionalParam;
+import ca.uhn.fhir.rest.annotation.Patch;
+import ca.uhn.fhir.rest.annotation.Read;
+import ca.uhn.fhir.rest.annotation.ResourceParam;
+import ca.uhn.fhir.rest.annotation.Search;
+import ca.uhn.fhir.rest.annotation.Transaction;
+import ca.uhn.fhir.rest.annotation.TransactionParam;
+import ca.uhn.fhir.rest.annotation.Update;
+import ca.uhn.fhir.rest.annotation.Validate;
 import ca.uhn.fhir.rest.api.Constants;
-import ca.uhn.fhir.rest.api.*;
+import ca.uhn.fhir.rest.api.EncodingEnum;
+import ca.uhn.fhir.rest.api.MethodOutcome;
+import ca.uhn.fhir.rest.api.PatchTypeEnum;
+import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
+import ca.uhn.fhir.rest.api.ValidationModeEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.api.server.storage.TransactionDetails;
 import ca.uhn.fhir.rest.param.ReferenceParam;
 import ca.uhn.fhir.rest.param.TokenAndListParam;
 import ca.uhn.fhir.rest.server.FifoMemoryPagingProvider;
@@ -27,7 +49,13 @@ import com.google.common.collect.Lists;
 import org.apache.commons.io.IOUtils;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
-import org.apache.http.client.methods.*;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpDelete;
+import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPatch;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.entity.ContentType;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -39,18 +67,29 @@ import org.eclipse.jetty.servlet.ServletHolder;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
 import org.hl7.fhir.r4.model.*;
-import org.junit.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class AuthorizationInterceptorR4Test {
 
@@ -66,7 +105,7 @@ public class AuthorizationInterceptorR4Test {
 	private static Server ourServer;
 	private static RestfulServer ourServlet;
 
-	@Before
+	@BeforeEach
 	public void before() {
 		ourCtx.setAddProfileTagWhenEncoding(AddProfileTagEnum.NEVER);
 		ourServlet.getInterceptorService().unregisterAllInterceptors();
@@ -637,7 +676,7 @@ public class AuthorizationInterceptorR4Test {
 		httpPost.setEntity(new StringEntity(ourCtx.newJsonParser().encodeResourceToString(bundle), ContentType.create(Constants.CT_FHIR_JSON_NEW, Charsets.UTF_8)));
 		status = ourClient.execute(httpPost);
 		responseString = extractResponseAndClose(status);
-		assertEquals(responseString, 403, status.getStatusLine().getStatusCode());
+		assertEquals(403, status.getStatusLine().getStatusCode(), responseString);
 		assertTrue(ourHitMethod);
 
 		ourHitMethod = false;
@@ -649,7 +688,7 @@ public class AuthorizationInterceptorR4Test {
 		httpPost.setEntity(new StringEntity(ourCtx.newJsonParser().encodeResourceToString(bundle), ContentType.create(Constants.CT_FHIR_JSON_NEW, Charsets.UTF_8)));
 		status = ourClient.execute(httpPost);
 		responseString = extractResponseAndClose(status);
-		assertEquals(responseString, 200, status.getStatusLine().getStatusCode());
+		assertEquals(200, status.getStatusLine().getStatusCode(), responseString);
 		assertTrue(ourHitMethod);
 
 		ourHitMethod = false;
@@ -661,7 +700,7 @@ public class AuthorizationInterceptorR4Test {
 		httpPost.setEntity(new StringEntity(ourCtx.newJsonParser().encodeResourceToString(bundle), ContentType.create(Constants.CT_FHIR_JSON_NEW, Charsets.UTF_8)));
 		status = ourClient.execute(httpPost);
 		responseString = extractResponseAndClose(status);
-		assertEquals(responseString, 403, status.getStatusLine().getStatusCode());
+		assertEquals(403, status.getStatusLine().getStatusCode(), responseString);
 		assertTrue(ourHitMethod);
 
 		ourHitMethod = false;
@@ -673,7 +712,7 @@ public class AuthorizationInterceptorR4Test {
 		httpPost.setEntity(new StringEntity(ourCtx.newJsonParser().encodeResourceToString(bundle), ContentType.create(Constants.CT_FHIR_JSON_NEW, Charsets.UTF_8)));
 		status = ourClient.execute(httpPost);
 		responseString = extractResponseAndClose(status);
-		assertEquals(responseString, 200, status.getStatusLine().getStatusCode());
+		assertEquals(200, status.getStatusLine().getStatusCode(), responseString);
 		assertTrue(ourHitMethod);
 	}
 
@@ -697,7 +736,7 @@ public class AuthorizationInterceptorR4Test {
 		httpDelete = new HttpDelete("http://localhost:" + ourPort + "/Patient/1");
 		status = ourClient.execute(httpDelete);
 		responseString = extractResponseAndClose(status);
-		assertEquals(responseString, 204, status.getStatusLine().getStatusCode());
+		assertEquals(204, status.getStatusLine().getStatusCode(), responseString);
 		assertTrue(ourHitMethod);
 
 		ourHitMethod = false;
@@ -705,7 +744,7 @@ public class AuthorizationInterceptorR4Test {
 		httpDelete = new HttpDelete("http://localhost:" + ourPort + "/Observation/1");
 		status = ourClient.execute(httpDelete);
 		responseString = extractResponseAndClose(status);
-		assertEquals(responseString, 403, status.getStatusLine().getStatusCode());
+		assertEquals(403, status.getStatusLine().getStatusCode(), responseString);
 		assertFalse(ourHitMethod);
 
 
@@ -905,7 +944,7 @@ public class AuthorizationInterceptorR4Test {
 	 */
 	@Test
 	public void testDenyByCompartmentWithType() throws Exception {
-		ourServlet.registerInterceptor(new AuthorizationInterceptor(PolicyEnum.DENY) {
+		ourServlet.registerInterceptor(new AuthorizationInterceptor(PolicyEnum.ALLOW) {
 			@Override
 			public List<IAuthRule> buildRuleList(RequestDetails theRequestDetails) {
 				return new RuleBuilder().deny("Rule 1").read().resourcesOfType(CarePlan.class).inCompartment("Patient", new IdType("Patient/845bd9f1-3635-4866-a6c8-1ca085df5c1a")).andThen().allowAll()
@@ -1809,7 +1848,7 @@ public class AuthorizationInterceptorR4Test {
 			@Override
 			public List<IAuthRule> buildRuleList(RequestDetails theRequestDetails) {
 				return new RuleBuilder()
-					.allow("Rule 1").operation().named("everything").onInstancesOfType(Patient.class).andRequireExplicitResponseAuthorization().withTester(new IAuthRuleTester() {
+					.allow("Rule 1").operation().named("everything").onInstancesOfType(Patient.class).andRequireExplicitResponseAuthorization().withTester(null /* null should be ignored */ ).withTester(new IAuthRuleTester() {
 						@Override
 						public boolean matches(RestOperationTypeEnum theOperation, RequestDetails theRequestDetails, IIdType theInputResourceId, IBaseResource theInputResource) {
 							return theInputResourceId.getIdPart().equals("1");
@@ -2784,9 +2823,9 @@ public class AuthorizationInterceptorR4Test {
 		assertEquals(200, status.getStatusLine().getStatusCode());
 		assertTrue(ourHitMethod);
 		respBundle = ourCtx.newJsonParser().parseResource(Bundle.class, respString);
-		Assert.assertEquals(5, respBundle.getEntry().size());
-		Assert.assertEquals(10, respBundle.getTotal());
-		Assert.assertEquals("Observation/0", respBundle.getEntry().get(0).getResource().getIdElement().toUnqualifiedVersionless().getValue());
+		assertEquals(5, respBundle.getEntry().size());
+		assertEquals(10, respBundle.getTotal());
+		assertEquals("Observation/0", respBundle.getEntry().get(0).getResource().getIdElement().toUnqualifiedVersionless().getValue());
 		assertNotNull(respBundle.getLink("next"));
 
 		// Load next page
@@ -2798,9 +2837,9 @@ public class AuthorizationInterceptorR4Test {
 		assertEquals(200, status.getStatusLine().getStatusCode());
 		assertFalse(ourHitMethod);
 		respBundle = ourCtx.newJsonParser().parseResource(Bundle.class, respString);
-		Assert.assertEquals(5, respBundle.getEntry().size());
-		Assert.assertEquals(10, respBundle.getTotal());
-		Assert.assertEquals("Observation/5", respBundle.getEntry().get(0).getResource().getIdElement().toUnqualifiedVersionless().getValue());
+		assertEquals(5, respBundle.getEntry().size());
+		assertEquals(10, respBundle.getTotal());
+		assertEquals("Observation/5", respBundle.getEntry().get(0).getResource().getIdElement().toUnqualifiedVersionless().getValue());
 		assertNull(respBundle.getLink("next"));
 
 	}
@@ -2836,9 +2875,9 @@ public class AuthorizationInterceptorR4Test {
 		assertEquals(200, status.getStatusLine().getStatusCode());
 		assertTrue(ourHitMethod);
 		respBundle = ourCtx.newJsonParser().parseResource(Bundle.class, respString);
-		Assert.assertEquals(5, respBundle.getEntry().size());
-		Assert.assertEquals(10, respBundle.getTotal());
-		Assert.assertEquals("Observation/0", respBundle.getEntry().get(0).getResource().getIdElement().toUnqualifiedVersionless().getValue());
+		assertEquals(5, respBundle.getEntry().size());
+		assertEquals(10, respBundle.getTotal());
+		assertEquals("Observation/0", respBundle.getEntry().get(0).getResource().getIdElement().toUnqualifiedVersionless().getValue());
 		assertNotNull(respBundle.getLink("next"));
 
 		// Load next page
@@ -3703,7 +3742,8 @@ public class AuthorizationInterceptorR4Test {
 				HookParams params = new HookParams()
 					.add(IBaseResource.class, next)
 					.add(RequestDetails.class, theRequestDetails)
-					.addIfMatchesType(ServletRequestDetails.class, theRequestDetails);
+					.addIfMatchesType(ServletRequestDetails.class, theRequestDetails)
+					.add(TransactionDetails.class, new TransactionDetails());
 				theRequestOperationCallback.callHooks(Pointcut.STORAGE_PRESTORAGE_RESOURCE_DELETED, params);
 			}
 			return new MethodOutcome();
@@ -3848,7 +3888,7 @@ public class AuthorizationInterceptorR4Test {
 		}
 
 		@GraphQL
-		public String processGraphQlRequest(ServletRequestDetails theRequestDetails, @IdParam IIdType theId, @GraphQLQuery String theQuery) {
+		public String processGraphQlRequest(ServletRequestDetails theRequestDetails, @IdParam IIdType theId, @GraphQLQueryUrl String theQuery) {
 			ourHitMethod = true;
 			return "{'foo':'bar'}";
 		}
@@ -3861,7 +3901,8 @@ public class AuthorizationInterceptorR4Test {
 					HookParams params = new HookParams()
 						.add(IBaseResource.class, next)
 						.add(RequestDetails.class, theRequestDetails)
-						.add(ServletRequestDetails.class, theRequestDetails);
+						.add(ServletRequestDetails.class, theRequestDetails)
+						.add(TransactionDetails.class, new TransactionDetails());
 					theInterceptorBroadcaster.callHooks(Pointcut.STORAGE_PRESTORAGE_RESOURCE_DELETED, params);
 				}
 			}
@@ -3870,13 +3911,13 @@ public class AuthorizationInterceptorR4Test {
 
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void afterClassClearContext() throws Exception {
 		JettyUtil.closeServer(ourServer);
 		TestUtil.clearAllStaticFieldsForUnitTest();
 	}
 
-	@BeforeClass
+	@BeforeAll
 	public static void beforeClass() throws Exception {
 		ourServer = new Server(0);
 

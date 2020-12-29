@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.migrate.taskdef;
  * #%L
  * HAPI FHIR JPA Server - Migration
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,26 +27,38 @@ import org.slf4j.LoggerFactory;
 import java.sql.SQLException;
 import java.util.Set;
 
-public class AddColumnTask extends BaseTableColumnTypeTask<AddColumnTask> {
+public class AddColumnTask extends BaseTableColumnTypeTask {
 
 	private static final Logger ourLog = LoggerFactory.getLogger(AddColumnTask.class);
 
+	public AddColumnTask(String theProductVersion, String theSchemaVersion) {
+		super(theProductVersion, theSchemaVersion);
+	}
 
 	@Override
-	public void execute() throws SQLException {
+	public void validate() {
+		super.validate();
+		setDescription("Add column " + getColumnName() + " on table " + getTableName());
+	}
+
+	@Override
+	public void doExecute() throws SQLException {
 		Set<String> columnNames = JdbcUtils.getColumnNames(getConnectionProperties(), getTableName());
 		if (columnNames.contains(getColumnName())) {
-			ourLog.info("Column {} already exists on table {} - No action performed", getColumnName(), getTableName());
+			logInfo(ourLog, "Column {} already exists on table {} - No action performed", getColumnName(), getTableName());
 			return;
 		}
 
 		String typeStatement = getTypeStatement();
 
-		String sql = "";
+		String sql;
 		switch (getDriverType()) {
-			case DERBY_EMBEDDED:
-			case MARIADB_10_1:
 			case MYSQL_5_7:
+			case MARIADB_10_1:
+				// Quote the column name as "SYSTEM" is a reserved word in MySQL
+				sql = "alter table " + getTableName() + " add column `" + getColumnName() + "` " + typeStatement;
+				break;
+			case DERBY_EMBEDDED:
 			case POSTGRES_9_4:
 				sql = "alter table " + getTableName() + " add column " + getColumnName() + " " + typeStatement;
 				break;
@@ -59,7 +71,7 @@ public class AddColumnTask extends BaseTableColumnTypeTask<AddColumnTask> {
 				throw new IllegalStateException();
 		}
 
-		ourLog.info("Adding column {} of type {} to table {}", getColumnName(), getSqlType(), getTableName());
+		logInfo(ourLog, "Adding column {} of type {} to table {}", getColumnName(), getSqlType(), getTableName());
 		executeSql(getTableName(), sql);
 	}
 

@@ -1,23 +1,30 @@
 package ca.uhn.fhirtest.config;
 
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
 import ca.uhn.fhir.jpa.config.BaseJavaConfigR4;
-import ca.uhn.fhir.jpa.dao.DaoConfig;
 import ca.uhn.fhir.jpa.model.entity.ModelConfig;
 import ca.uhn.fhir.jpa.search.DatabaseBackedPagingProvider;
 import ca.uhn.fhir.jpa.search.LuceneSearchMappingFactory;
+import ca.uhn.fhir.jpa.util.CurrentThreadCaptureQueriesListener;
 import ca.uhn.fhir.jpa.util.DerbyTenSevenHapiFhirDialect;
+import ca.uhn.fhir.jpa.validation.ValidationSettings;
+import ca.uhn.fhir.rest.client.interceptor.ThreadLocalCapturingInterceptor;
 import ca.uhn.fhir.rest.server.interceptor.RequestValidatingInterceptor;
 import ca.uhn.fhir.validation.ResultSeverityEnum;
 import ca.uhn.fhirtest.interceptor.PublicSecurityInterceptor;
+import net.ttddyy.dsproxy.support.ProxyDataSourceBuilder;
 import org.apache.commons.dbcp2.BasicDataSource;
+import org.apache.commons.lang3.time.DateUtils;
 import org.hibernate.dialect.PostgreSQL94Dialect;
 import org.hl7.fhir.dstu2.model.Subscription;
+import org.hl7.fhir.r5.utils.IResourceValidator;
 import org.springframework.beans.factory.annotation.Autowire;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
@@ -26,6 +33,7 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 import javax.persistence.EntityManagerFactory;
 import javax.sql.DataSource;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 @Configuration
 @Import(CommonConfig.class)
@@ -65,12 +73,22 @@ public class TestR4Config extends BaseJavaConfigR4 {
 		retVal.setFetchSizeDefaultMaximum(10000);
 		retVal.setExpungeEnabled(true);
 		retVal.setFilterParameterEnabled(true);
+		retVal.setDefaultSearchParamsCanBeOverridden(false);
 		return retVal;
 	}
 
 	@Bean
 	public ModelConfig modelConfig() {
 		return daoConfig().getModelConfig();
+	}
+
+
+	@Override
+	@Bean
+	public ValidationSettings validationSettings() {
+		ValidationSettings retVal = super.validationSettings();
+		retVal.setLocalReferenceValidationDefaultPolicy(IResourceValidator.ReferenceValidationPolicy.CHECK_VALID);
+		return retVal;
 	}
 
 
@@ -86,7 +104,17 @@ public class TestR4Config extends BaseJavaConfigR4 {
 		retVal.setUsername(myDbUsername);
 		retVal.setPassword(myDbPassword);
 		retVal.setDefaultQueryTimeout(20);
-		return retVal;
+		retVal.setMaxConnLifetimeMillis(5 * DateUtils.MILLIS_PER_MINUTE);
+
+		DataSource dataSource = ProxyDataSourceBuilder
+			.create(retVal)
+//			.logQueryBySlf4j(SLF4JLogLevel.INFO, "SQL")
+			.logSlowQueryBySlf4j(10000, TimeUnit.MILLISECONDS)
+			.afterQuery(new CurrentThreadCaptureQueriesListener())
+			.countQuery()
+			.build();
+
+		return dataSource;
 	}
 
 	@Override
@@ -140,7 +168,7 @@ public class TestR4Config extends BaseJavaConfigR4 {
 		requestValidator.setFailOnSeverity(null);
 		requestValidator.setAddResponseHeaderOnSeverity(null);
 		requestValidator.setAddResponseOutcomeHeaderOnSeverity(ResultSeverityEnum.INFORMATION);
-		requestValidator.addValidatorModule(instanceValidatorR4());
+		requestValidator.addValidatorModule(instanceValidator());
 		requestValidator.setIgnoreValidatorExceptions(true);
 
 		return requestValidator;
@@ -152,7 +180,8 @@ public class TestR4Config extends BaseJavaConfigR4 {
 	}
 
 	@Bean
-	public JpaTransactionManager transactionManager(EntityManagerFactory entityManagerFactory) {
+	@Primary
+	public JpaTransactionManager hapiTransactionManager(EntityManagerFactory entityManagerFactory) {
 		JpaTransactionManager retVal = new JpaTransactionManager();
 		retVal.setEntityManagerFactory(entityManagerFactory);
 		return retVal;

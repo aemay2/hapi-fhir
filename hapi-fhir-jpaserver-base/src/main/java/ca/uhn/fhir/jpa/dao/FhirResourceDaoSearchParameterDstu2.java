@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.dao;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,24 +21,31 @@ package ca.uhn.fhir.jpa.dao;
  */
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoSearchParameter;
+import ca.uhn.fhir.jpa.api.dao.IFhirSystemDao;
 import ca.uhn.fhir.jpa.dao.r4.FhirResourceDaoSearchParameterR4;
 import ca.uhn.fhir.jpa.model.entity.ResourceTable;
-import ca.uhn.fhir.model.dstu2.composite.MetaDt;
-import ca.uhn.fhir.model.dstu2.resource.Bundle;
+import ca.uhn.fhir.jpa.searchparam.extractor.ISearchParamExtractor;
 import ca.uhn.fhir.model.dstu2.resource.SearchParameter;
 import ca.uhn.fhir.model.dstu2.valueset.ResourceTypeEnum;
 import ca.uhn.fhir.model.dstu2.valueset.SearchParamTypeEnum;
 import ca.uhn.fhir.model.primitive.BoundCodeDt;
+import org.hl7.fhir.convertors.conv10_40.SearchParameter10_40;
+import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-public class FhirResourceDaoSearchParameterDstu2 extends FhirResourceDaoDstu2<SearchParameter> implements IFhirResourceDaoSearchParameter<SearchParameter> {
+import static org.apache.commons.lang3.StringUtils.isBlank;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
+
+public class FhirResourceDaoSearchParameterDstu2 extends BaseHapiFhirResourceDao<SearchParameter> implements IFhirResourceDaoSearchParameter<SearchParameter> {
 
 	@Autowired
-	private IFhirSystemDao<Bundle, MetaDt> mySystemDao;
+	private ISearchParamExtractor mySearchParamExtractor;
+	private FhirContext myDstu2Hl7OrgContext = FhirContext.forDstu2Hl7Org();
 
 	protected void markAffectedResources(SearchParameter theResource) {
 		Boolean reindex = theResource != null ? CURRENTLY_REINDEXING.get(theResource) : null;
@@ -50,6 +57,7 @@ public class FhirResourceDaoSearchParameterDstu2 extends FhirResourceDaoDstu2<Se
 	protected void postPersist(ResourceTable theEntity, SearchParameter theResource) {
 		super.postPersist(theEntity, theResource);
 		markAffectedResources(theResource);
+
 	}
 
 	@Override
@@ -68,16 +76,16 @@ public class FhirResourceDaoSearchParameterDstu2 extends FhirResourceDaoDstu2<Se
 	protected void validateResourceForStorage(SearchParameter theResource, ResourceTable theEntityToSave) {
 		super.validateResourceForStorage(theResource, theEntityToSave);
 
-		Enum<?> status = theResource.getStatusElement().getValueAsEnum();
-		List<BoundCodeDt<ResourceTypeEnum>> base = Collections.emptyList();
-		if (theResource.getBase() != null) {
-			base = Arrays.asList(theResource.getBaseElement());
-		}
-		String expression = theResource.getXpath();
-		FhirContext context = getContext();
-		SearchParamTypeEnum type = theResource.getTypeElement().getValueAsEnum();
+		String encoded = getContext().newJsonParser().encodeResourceToString(theResource);
+		org.hl7.fhir.dstu2.model.SearchParameter hl7Org = myDstu2Hl7OrgContext.newJsonParser().parseResource(org.hl7.fhir.dstu2.model.SearchParameter.class, encoded);
 
-		FhirResourceDaoSearchParameterR4.validateSearchParam(type, status, base, expression, context, getConfig());
+		org.hl7.fhir.r4.model.SearchParameter convertedSp = SearchParameter10_40.convertSearchParameter(hl7Org);
+		if (isBlank(convertedSp.getExpression()) && isNotBlank(hl7Org.getXpath())) {
+			convertedSp.setExpression(hl7Org.getXpath());
+		}
+
+		FhirResourceDaoSearchParameterR4.validateSearchParam(convertedSp, getContext(), getConfig(), mySearchParamRegistry, mySearchParamExtractor);
+
 	}
 
 

@@ -1,10 +1,11 @@
 package ca.uhn.fhir.jpa.dao.r4;
 
-import ca.uhn.fhir.context.support.IContextValidationSupport;
-import ca.uhn.fhir.jpa.dao.DaoConfig;
+import ca.uhn.fhir.context.support.IValidationSupport;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
 import ca.uhn.fhir.jpa.entity.TermCodeSystemVersion;
 import ca.uhn.fhir.jpa.entity.TermConcept;
 import ca.uhn.fhir.jpa.entity.TermConceptParentChildLink.RelationshipTypeEnum;
+import ca.uhn.fhir.rest.api.server.storage.ResourcePersistentId;
 import ca.uhn.fhir.jpa.model.entity.ResourceTable;
 import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
 import ca.uhn.fhir.jpa.term.TermReindexingSvcImpl;
@@ -13,18 +14,33 @@ import ca.uhn.fhir.rest.param.TokenParam;
 import ca.uhn.fhir.rest.param.TokenParamModifier;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+import ca.uhn.fhir.rest.server.exceptions.PreconditionFailedException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.util.TestUtil;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
 import org.hl7.fhir.instance.model.api.IIdType;
-import org.hl7.fhir.r4.model.*;
+import org.hl7.fhir.r4.model.AllergyIntolerance;
 import org.hl7.fhir.r4.model.AllergyIntolerance.AllergyIntoleranceCategory;
+import org.hl7.fhir.r4.model.AuditEvent;
+import org.hl7.fhir.r4.model.CodeSystem;
 import org.hl7.fhir.r4.model.CodeSystem.CodeSystemContentMode;
 import org.hl7.fhir.r4.model.CodeSystem.ConceptDefinitionComponent;
-import org.hl7.fhir.r4.model.ValueSet.*;
-import org.junit.*;
+import org.hl7.fhir.r4.model.InstantType;
+import org.hl7.fhir.r4.model.Observation;
+import org.hl7.fhir.r4.model.StringType;
+import org.hl7.fhir.r4.model.ValueSet;
+import org.hl7.fhir.r4.model.ValueSet.ConceptReferenceComponent;
+import org.hl7.fhir.r4.model.ValueSet.ConceptSetComponent;
+import org.hl7.fhir.r4.model.ValueSet.FilterOperator;
+import org.hl7.fhir.r4.model.ValueSet.ValueSetComposeComponent;
+import org.hl7.fhir.r4.model.ValueSet.ValueSetExpansionContainsComponent;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 
 import java.util.ArrayList;
 import java.util.Date;
@@ -32,8 +48,13 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.containsStringIgnoringCase;
+import static org.hamcrest.Matchers.empty;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 @SuppressWarnings("Duplicates")
 public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
@@ -43,22 +64,23 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(FhirResourceDaoR4TerminologyTest.class);
 
 
-	@After
+	@AfterEach
 	public void after() {
 		myDaoConfig.setDeferIndexingForCodesystemsOfSize(new DaoConfig().getDeferIndexingForCodesystemsOfSize());
 
 		TermReindexingSvcImpl.setForceSaveDeferredAlwaysForUnitTest(false);
 	}
 
-	@Before
+	@BeforeEach
 	public void before() {
 		myDaoConfig.setMaximumExpansionSize(5000);
-		myCachingValidationSupport.flushCaches();
+		myCachingValidationSupport.invalidateCaches();
 	}
 
 	private CodeSystem createExternalCs() {
 		CodeSystem codeSystem = new CodeSystem();
 		codeSystem.setUrl(URL_MY_CODE_SYSTEM);
+		codeSystem.setVersion("SYSTEM VERSION");
 		codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
 		IIdType id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
 
@@ -95,7 +117,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 		TermConcept childCA = new TermConcept(cs, "childCA").setDisplay("Child CA");
 		parentC.addChild(childCA, RelationshipTypeEnum.ISA);
 
-		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(table.getId(), URL_MY_CODE_SYSTEM, "SYSTEM NAME", "SYSTEM VERSION", cs, table);
+		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(new ResourcePersistentId(table.getId()), URL_MY_CODE_SYSTEM, "SYSTEM NAME", "SYSTEM VERSION", cs, table);
 		return codeSystem;
 	}
 
@@ -108,6 +130,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 	private CodeSystem createExternalCsDogs() {
 		CodeSystem codeSystem = new CodeSystem();
 		codeSystem.setUrl(URL_MY_CODE_SYSTEM);
+		codeSystem.setVersion("SYSTEM VERSION");
 		codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
 		IIdType id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
 
@@ -131,13 +154,14 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 		TermConcept beagle = new TermConcept(cs, "beagle").setDisplay("Beagle");
 		dogs.addChild(beagle, RelationshipTypeEnum.ISA);
 
-		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(table.getId(), URL_MY_CODE_SYSTEM, "SYSTEM NAME", "SYSTEM VERSION", cs, table);
+		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(new ResourcePersistentId(table.getId()), URL_MY_CODE_SYSTEM, "SYSTEM NAME", "SYSTEM VERSION", cs, table);
 		return codeSystem;
 	}
 
 	private void createExternalCsLarge() {
 		CodeSystem codeSystem = new CodeSystem();
 		codeSystem.setUrl(URL_MY_CODE_SYSTEM);
+		codeSystem.setVersion("SYSTEM VERSION");
 		codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
 		IIdType id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
 
@@ -162,7 +186,9 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 			parentB.addChild(childI, RelationshipTypeEnum.ISA);
 		}
 
-		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(table.getId(), URL_MY_CODE_SYSTEM, "SYSTEM NAME", "SYSTEM VERSION", cs, table);
+		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(new ResourcePersistentId(table.getId()), URL_MY_CODE_SYSTEM, "SYSTEM NAME", "SYSTEM VERSION", cs, table);
+
+		myTerminologyDeferredStorageSvc.saveAllDeferred();
 	}
 
 	private void createLocalCsAndVs() {
@@ -209,6 +235,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 
 	@Test
 	public void testCodeSystemCreateDuplicateFails() {
+		// No version.
 		CodeSystem codeSystem = new CodeSystem();
 		codeSystem.setUrl(URL_MY_CODE_SYSTEM);
 		codeSystem.setContent(CodeSystemContentMode.COMPLETE);
@@ -223,6 +250,25 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 		} catch (UnprocessableEntityException e) {
 			assertEquals("Can not create multiple CodeSystem resources with CodeSystem.url \"http://example.com/my_code_system\", already have one with resource ID: CodeSystem/" + id.getIdPart(), e.getMessage());
 		}
+
+		// With version.
+		codeSystem = new CodeSystem();
+		codeSystem.setUrl(URL_MY_CODE_SYSTEM);
+		codeSystem.setVersion("1");
+		codeSystem.setContent(CodeSystemContentMode.COMPLETE);
+		id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
+
+		codeSystem = new CodeSystem();
+		codeSystem.setUrl(URL_MY_CODE_SYSTEM);
+		codeSystem.setVersion("1");
+		codeSystem.setContent(CodeSystemContentMode.COMPLETE);
+		try {
+			myCodeSystemDao.create(codeSystem, mySrd);
+			fail();
+		} catch (UnprocessableEntityException e) {
+			assertEquals("Can not create multiple CodeSystem resources with CodeSystem.url \"http://example.com/my_code_system\" and CodeSystem.version \"1\", already have one with resource ID: CodeSystem/" + id.getIdPart(), e.getMessage());
+		}
+
 	}
 
 	@Test
@@ -262,7 +308,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 		runInTransaction(() -> {
 			List<TermConcept> concepts = myTermConceptDao.findAll();
 			for (TermConcept next : concepts) {
-				assertTrue(new InstantType(new Date(next.getUpdated().getTime())) + " <= " + new InstantType(new Date(start)), next.getUpdated().getTime() > start);
+				assertTrue(next.getUpdated().getTime() > start, new InstantType(new Date(next.getUpdated().getTime())) + " <= " + new InstantType(new Date(start)));
 			}
 		});
 	}
@@ -450,6 +496,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 	public void testExpandWithIncludeContainingDashesInInclude() {
 		CodeSystem codeSystem = new CodeSystem();
 		codeSystem.setUrl(URL_MY_CODE_SYSTEM);
+		codeSystem.setVersion("SYSTEM VERSION");
 		codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
 		IIdType id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
 
@@ -474,7 +521,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 		concept = new TermConcept(cs, "LA9999-7");
 		cs.getConcepts().add(concept);
 
-		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(table.getId(), URL_MY_CODE_SYSTEM, "SYSTEM NAME", "SYSTEM VERSION" , cs, table);
+		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(new ResourcePersistentId(table.getId()), URL_MY_CODE_SYSTEM, "SYSTEM NAME", "SYSTEM VERSION" , cs, table);
 
 		ValueSet valueSet = new ValueSet();
 		valueSet.setUrl(URL_MY_VALUE_SET);
@@ -562,7 +609,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 	}
 
 	@Test
-	@Ignore
+	@Disabled
 	public void testExpandWithNoResultsInLocalValueSet1() {
 		createLocalCsAndVs();
 
@@ -592,13 +639,13 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 		try {
 			myValueSetDao.expand(vs, null);
 			fail();
-		} catch (InvalidRequestException e) {
-			assertEquals("Unable to find code system http://example.com/my_code_systemAA", e.getMessage());
+		} catch (PreconditionFailedException e) {
+			assertEquals("Unknown CodeSystem URI \"http://example.com/my_code_systemAA\" referenced from ValueSet", e.getMessage());
 		}
 	}
 
 	// TODO: get this working
-	@Ignore
+	@Disabled
 	@Test
 	public void testExpandWithOpEquals() {
 
@@ -792,6 +839,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 	public void testLookupSnomed() {
 		CodeSystem codeSystem = new CodeSystem();
 		codeSystem.setUrl("http://snomed.info/sct");
+		codeSystem.setVersion("SYSTEM VERSION");
 		codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
 		IIdType id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
 
@@ -801,11 +849,11 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 		cs.setResource(table);
 		TermConcept parentA = new TermConcept(cs, "ParentA").setDisplay("Parent A");
 		cs.getConcepts().add(parentA);
-		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(table.getId(), "http://snomed.info/sct", "Snomed CT", "SYSTEM VERSION" , cs, table);
+		myTermCodeSystemStorageSvc.storeNewCodeSystemVersion(new ResourcePersistentId(table.getId()), "http://snomed.info/sct", "Snomed CT", "SYSTEM VERSION" , cs, table);
 
 		StringType code = new StringType("ParentA");
 		StringType system = new StringType("http://snomed.info/sct");
-		IContextValidationSupport.LookupCodeResult outcome = myCodeSystemDao.lookupCode(code, system, null, mySrd);
+		IValidationSupport.LookupCodeResult outcome = myCodeSystemDao.lookupCode(code, system, null, mySrd);
 		assertEquals(true, outcome.isFound());
 	}
 
@@ -813,7 +861,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 	 * Can't currently abort costly
 	 */
 	@Test
-	@Ignore
+	@Disabled
 	public void testRefuseCostlyExpansionFhirCodesystem() {
 		createLocalCsAndVs();
 		myDaoConfig.setMaximumExpansionSize(1);
@@ -967,6 +1015,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 		myAllergyIntoleranceDao.create(ai3, mySrd).getId().toUnqualifiedVersionless().getValue();
 
 		SearchParameterMap params;
+
 		params = new SearchParameterMap();
 		params.add(AllergyIntolerance.SP_CLINICAL_STATUS, new TokenParam(null, "active"));
 		assertThat(toUnqualifiedVersionlessIdValues(myAllergyIntoleranceDao.search(params)), containsInAnyOrder(id1));
@@ -1248,7 +1297,7 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 	 * Todo: not yet implemented
 	 */
 	@Test
-	@Ignore
+	@Disabled
 	public void testSearchCodeNotInBuiltInValueSet() {
 		AllergyIntolerance ai1 = new AllergyIntolerance();
 		ai1.getClinicalStatus().addCoding().setSystem("http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical").setCode("active");
@@ -1291,9 +1340,5 @@ public class FhirResourceDaoR4TerminologyTest extends BaseJpaR4Test {
 		return retVal;
 	}
 
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
-	}
 
 }

@@ -1,6 +1,6 @@
 package ca.uhn.fhir.jpa.provider.r5;
 
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoEncounter;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoEncounter;
 import ca.uhn.fhir.jpa.model.util.JpaConstants;
 import ca.uhn.fhir.model.api.annotation.Description;
 import ca.uhn.fhir.model.valueset.BundleTypeEnum;
@@ -20,7 +20,7 @@ import org.hl7.fhir.r5.model.UnsignedIntType;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,6 +52,10 @@ public class BaseJpaResourceProviderEncounterR5 extends JpaResourceProviderR5<En
 			@Description(formalDefinition="Results from this method are returned across multiple pages. This parameter controls the size of those pages.") 
 			@OperationParam(name = Constants.PARAM_COUNT) 
 			UnsignedIntType theCount,
+
+			@Description(formalDefinition="Results from this method are returned across multiple pages. This parameter controls the offset when fetching a page.")
+			@OperationParam(name = Constants.PARAM_OFFSET)
+			UnsignedIntType theOffset,
 			
 			@Description(shortDefinition="Only return resources which were last updated as specified by the given range")
 			@OperationParam(name = Constants.PARAM_LASTUPDATED, min=0, max=1) 
@@ -63,7 +67,7 @@ public class BaseJpaResourceProviderEncounterR5 extends JpaResourceProviderR5<En
 
 		startRequest(theServletRequest);
 		try {
-			return ((IFhirResourceDaoEncounter<Encounter>)getDao()).encounterInstanceEverything(theServletRequest, theId, theCount, theLastUpdated, theSortSpec);
+			return ((IFhirResourceDaoEncounter<Encounter>)getDao()).encounterInstanceEverything(theServletRequest, theId, theCount, theOffset, theLastUpdated, theSortSpec);
 		} finally {
 			endRequest(theServletRequest);
 		}}
@@ -79,6 +83,10 @@ public class BaseJpaResourceProviderEncounterR5 extends JpaResourceProviderR5<En
 				@Description(formalDefinition="Results from this method are returned across multiple pages. This parameter controls the size of those pages.") 
 				@OperationParam(name = Constants.PARAM_COUNT) 
 				UnsignedIntType theCount,
+
+				@Description(formalDefinition="Results from this method are returned across multiple pages. This parameter controls the offset when fetching a page.")
+				@OperationParam(name = Constants.PARAM_OFFSET)
+				UnsignedIntType theOffset,
 				
 				@Description(shortDefinition="Only return resources which were last updated as specified by the given range")
 				@OperationParam(name = Constants.PARAM_LASTUPDATED, min=0, max=1) 
@@ -90,7 +98,7 @@ public class BaseJpaResourceProviderEncounterR5 extends JpaResourceProviderR5<En
 
 			startRequest(theServletRequest);
 			try {
-				return ((IFhirResourceDaoEncounter<Encounter>)getDao()).encounterTypeEverything(theServletRequest, theCount, theLastUpdated, theSortSpec);
+				return ((IFhirResourceDaoEncounter<Encounter>)getDao()).encounterTypeEverything(theServletRequest, theCount, theOffset, theLastUpdated, theSortSpec);
 			} finally {
 				endRequest(theServletRequest);
 			}

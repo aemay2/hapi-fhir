@@ -5,7 +5,11 @@ import ca.uhn.fhir.model.api.IQueryParameterAnd;
 import ca.uhn.fhir.model.api.IQueryParameterOr;
 import ca.uhn.fhir.model.api.IQueryParameterType;
 import ca.uhn.fhir.model.api.Include;
-import ca.uhn.fhir.rest.api.*;
+import ca.uhn.fhir.rest.api.Constants;
+import ca.uhn.fhir.rest.api.SearchTotalModeEnum;
+import ca.uhn.fhir.rest.api.SortOrderEnum;
+import ca.uhn.fhir.rest.api.SortSpec;
+import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.rest.param.DateParam;
 import ca.uhn.fhir.rest.param.DateRangeParam;
 import ca.uhn.fhir.rest.param.QuantityParam;
@@ -17,7 +21,17 @@ import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
 import java.io.Serializable;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
@@ -26,7 +40,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
  * #%L
  * HAPI FHIR Search Parameters
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,12 +58,14 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 public class SearchParameterMap implements Serializable {
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(SearchParameterMap.class);
+	public static final Integer INTEGER_0 = 0;
 
 	private final HashMap<String, List<List<IQueryParameterType>>> mySearchParameterMap = new LinkedHashMap<>();
 
 	private static final long serialVersionUID = 1L;
 
 	private Integer myCount;
+	private Integer myOffset;
 	private EverythingModeEnum myEverythingMode = null;
 	private Set<Include> myIncludes;
 	private DateRangeParam myLastUpdated;
@@ -59,6 +75,10 @@ public class SearchParameterMap implements Serializable {
 	private SortSpec mySort;
 	private SummaryEnum mySummaryMode;
 	private SearchTotalModeEnum mySearchTotalMode;
+	private QuantityParam myNearDistanceParam;
+	private boolean myLastN;
+	private Integer myLastNMax;
+	private boolean myDeleteExpunge;
 
 	/**
 	 * Constructor
@@ -111,7 +131,7 @@ public class SearchParameterMap implements Serializable {
 		}
 	}
 
-		public void add(String theName, IQueryParameterOr<?> theOr) {
+	public void add(String theName, IQueryParameterOr<?> theOr) {
 		if (theOr == null) {
 			return;
 		}
@@ -155,8 +175,9 @@ public class SearchParameterMap implements Serializable {
 		}
 	}
 
-	public void addRevInclude(Include theInclude) {
+	public SearchParameterMap addRevInclude(Include theInclude) {
 		getRevIncludes().add(theInclude);
+		return this;
 	}
 
 	private void addUrlIncludeParams(StringBuilder b, String paramName, Set<Include> theList) {
@@ -191,6 +212,14 @@ public class SearchParameterMap implements Serializable {
 
 	public void setCount(Integer theCount) {
 		myCount = theCount;
+	}
+
+	public Integer getOffset() {
+		return myOffset;
+	}
+
+	public void setOffset(Integer theOffset) {
+		myOffset = theOffset;
 	}
 
 	public EverythingModeEnum getEverythingMode() {
@@ -264,8 +293,9 @@ public class SearchParameterMap implements Serializable {
 		return mySort;
 	}
 
-	public void setSort(SortSpec theSort) {
+	public SearchParameterMap setSort(SortSpec theSort) {
 		mySort = theSort;
+		return this;
 	}
 
 	/**
@@ -300,6 +330,42 @@ public class SearchParameterMap implements Serializable {
 		myLoadSynchronous = theLoadSynchronous;
 		return this;
 	}
+
+	/**
+	 * If set, tells the server to use an Elasticsearch query to generate a list of
+	 * Resource IDs for the LastN operation
+	 */
+	public boolean isLastN() {
+		return myLastN;
+	}
+
+	/**
+	 * If set, tells the server to use an Elasticsearch query to generate a list of
+	 * Resource IDs for the LastN operation
+	 */
+	public SearchParameterMap setLastN(boolean theLastN) {
+		myLastN = theLastN;
+		return this;
+	}
+
+
+	/**
+	 * If set, tells the server the maximum number of observations to return for each
+	 * observation code in the result set of a lastn operation
+	 */
+	public Integer getLastNMax() {
+		return myLastNMax;
+	}
+
+	/**
+	 * If set, tells the server the maximum number of observations to return for each
+	 * observation code in the result set of a lastn operation
+	 */
+	public SearchParameterMap setLastNMax(Integer theLastNMax) {
+		myLastNMax = theLastNMax;
+		return this;
+	}
+
 
 	/**
 	 * This method creates a URL query string representation of the parameters in this
@@ -419,6 +485,13 @@ public class SearchParameterMap implements Serializable {
 			b.append(getCount());
 		}
 
+		if (getOffset() != null) {
+			addUrlParamSeparator(b);
+			b.append(Constants.PARAM_OFFSET);
+			b.append('=');
+			b.append(getOffset());
+		}
+
 		// Summary mode (_summary)
 		if (getSummaryMode() != null) {
 			addUrlParamSeparator(b);
@@ -454,45 +527,54 @@ public class SearchParameterMap implements Serializable {
 		return b.toString();
 	}
 
+
 	public void clean() {
 		for (Map.Entry<String, List<List<IQueryParameterType>>> nextParamEntry : this.entrySet()) {
 			String nextParamName = nextParamEntry.getKey();
 			List<List<IQueryParameterType>> andOrParams = nextParamEntry.getValue();
-			clean(nextParamName, andOrParams);
+			cleanParameter(nextParamName, andOrParams);
 		}
 	}
 
 	/*
-	 * Filter out
+	 * Given a particular named parameter, e.g. `name`, iterate over AndOrParams and remove any which are empty.
 	 */
-	private void clean(String theParamName, List<List<IQueryParameterType>> theAndOrParams) {
-		for (int andListIdx = 0; andListIdx < theAndOrParams.size(); andListIdx++) {
-			List<? extends IQueryParameterType> nextOrList = theAndOrParams.get(andListIdx);
+	private void cleanParameter(String theParamName, List<List<IQueryParameterType>> theAndOrParams) {
+		theAndOrParams
+			.forEach(
+				orList -> {
+					List<IQueryParameterType> emptyParameters = orList.stream()
+						.filter(nextOr -> nextOr.getMissing() == null)
+						.filter(nextOr -> nextOr instanceof QuantityParam)
+						.filter(nextOr -> isBlank(((QuantityParam) nextOr).getValueAsString()))
+						.collect(Collectors.toList());
 
-			for (int orListIdx = 0; orListIdx < nextOrList.size(); orListIdx++) {
-				IQueryParameterType nextOr = nextOrList.get(orListIdx);
-				boolean hasNoValue = false;
-				if (nextOr.getMissing() != null) {
-					continue;
-				}
-				if (nextOr instanceof QuantityParam) {
-					if (isBlank(((QuantityParam) nextOr).getValueAsString())) {
-						hasNoValue = true;
-					}
-				}
-
-				if (hasNoValue) {
 					ourLog.debug("Ignoring empty parameter: {}", theParamName);
-					nextOrList.remove(orListIdx);
-					orListIdx--;
+					orList.removeAll(emptyParameters);
 				}
-			}
+			);
+		theAndOrParams.removeIf(List::isEmpty);
+	}
 
-			if (nextOrList.isEmpty()) {
-				theAndOrParams.remove(andListIdx);
-				andListIdx--;
-			}
-		}
+	public void setNearDistanceParam(QuantityParam theQuantityParam) {
+		myNearDistanceParam = theQuantityParam;
+	}
+
+	public QuantityParam getNearDistanceParam() {
+		return myNearDistanceParam;
+	}
+
+	public boolean isWantOnlyCount() {
+		return SummaryEnum.COUNT.equals(getSummaryMode()) || INTEGER_0.equals(getCount());
+	}
+
+	public boolean isDeleteExpunge() {
+		return myDeleteExpunge;
+	}
+
+	public SearchParameterMap setDeleteExpunge(boolean theDeleteExpunge) {
+		myDeleteExpunge = theDeleteExpunge;
+		return this;
 	}
 
 	public enum EverythingModeEnum {
@@ -530,7 +612,7 @@ public class SearchParameterMap implements Serializable {
 		}
 	}
 
-	public class IncludeComparator implements Comparator<Include> {
+	public static class IncludeComparator implements Comparator<Include> {
 
 		@Override
 		public int compare(Include theO1, Include theO2) {
@@ -546,7 +628,7 @@ public class SearchParameterMap implements Serializable {
 
 	}
 
-	public class QueryParameterOrComparator implements Comparator<List<IQueryParameterType>> {
+	public static class QueryParameterOrComparator implements Comparator<List<IQueryParameterType>> {
 		private final FhirContext myCtx;
 
 		QueryParameterOrComparator(FhirContext theCtx) {
@@ -561,7 +643,7 @@ public class SearchParameterMap implements Serializable {
 
 	}
 
-	public class QueryParameterTypeComparator implements Comparator<IQueryParameterType> {
+	public static class QueryParameterTypeComparator implements Comparator<IQueryParameterType> {
 
 		private final FhirContext myCtx;
 
@@ -614,7 +696,7 @@ public class SearchParameterMap implements Serializable {
 		return mySearchParameterMap.get(theName);
 	}
 
-	private void put(String theName, List<List<IQueryParameterType>> theParams) {
+	public void put(String theName, List<List<IQueryParameterType>> theParams) {
 		mySearchParameterMap.put(theName, theParams);
 	}
 
@@ -637,4 +719,22 @@ public class SearchParameterMap implements Serializable {
 	public List<List<IQueryParameterType>> remove(String theName) {
 		return mySearchParameterMap.remove(theName);
 	}
+
+	public int size() {
+		return mySearchParameterMap.size();
+	}
+
+	public static SearchParameterMap newSynchronous() {
+		SearchParameterMap retVal = new SearchParameterMap();
+		retVal.setLoadSynchronous(true);
+		return retVal;
+	}
+
+	public static SearchParameterMap newSynchronous(String theName, IQueryParameterType theParam) {
+		SearchParameterMap retVal = new SearchParameterMap();
+		retVal.setLoadSynchronous(true);
+		retVal.add(theName, theParam);
+		return retVal;
+	}
+
 }

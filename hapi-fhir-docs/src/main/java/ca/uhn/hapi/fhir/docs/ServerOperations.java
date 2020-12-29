@@ -4,7 +4,7 @@ package ca.uhn.hapi.fhir.docs;
  * #%L
  * HAPI FHIR - Docs
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,9 +53,9 @@ public class ServerOperations {
 
 		ourLog.info("Received call with content type {} and {} bytes", contentType, bytes.length);
 
-		theServletResponse.setContentType(contentType);
-		theServletResponse.getOutputStream().write(bytes);
-		theServletResponse.getOutputStream().close();
+		theServletResponse.setContentType("text/plain");
+		theServletResponse.getWriter().write("hello");
+		theServletResponse.getWriter().close();
 	}
 	//END SNIPPET: manualInputAndOutput
 

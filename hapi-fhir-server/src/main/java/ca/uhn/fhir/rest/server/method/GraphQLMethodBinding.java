@@ -4,7 +4,7 @@ package ca.uhn.fhir.rest.server.method;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,16 +23,17 @@ package ca.uhn.fhir.rest.server.method;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.interceptor.api.HookParams;
 import ca.uhn.fhir.interceptor.api.Pointcut;
+import ca.uhn.fhir.rest.annotation.GraphQLQueryBody;
+import ca.uhn.fhir.rest.annotation.GraphQLQueryUrl;
 import ca.uhn.fhir.rest.api.Constants;
+import ca.uhn.fhir.rest.api.RequestTypeEnum;
 import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
 import ca.uhn.fhir.rest.api.server.IRestfulServer;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.api.server.ResponseDetails;
 import ca.uhn.fhir.rest.param.ParameterUtil;
-import ca.uhn.fhir.rest.param.TokenParam;
 import ca.uhn.fhir.rest.server.exceptions.BaseServerResponseException;
 import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
-import org.hl7.fhir.instance.model.api.IBaseCoding;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 
 import javax.annotation.Nonnull;
@@ -45,11 +46,17 @@ import java.lang.reflect.Method;
 public class GraphQLMethodBinding extends BaseMethodBinding<String> {
 
 	private final Integer myIdParamIndex;
+	private final Integer myQueryUrlParamIndex;
+	private final Integer myQueryBodyParamIndex;
+	private final RequestTypeEnum myMethodRequestType;
 
-	public GraphQLMethodBinding(Method theMethod, FhirContext theContext, Object theProvider) {
+	public GraphQLMethodBinding(Method theMethod, RequestTypeEnum theMethodRequestType, FhirContext theContext, Object theProvider) {
 		super(theMethod, theContext, theProvider);
 
 		myIdParamIndex = ParameterUtil.findIdParameterIndex(theMethod, theContext);
+		myQueryUrlParamIndex = ParameterUtil.findParamAnnotationIndex(theMethod, GraphQLQueryUrl.class);
+		myQueryBodyParamIndex = ParameterUtil.findParamAnnotationIndex(theMethod, GraphQLQueryBody.class);
+		myMethodRequestType = theMethodRequestType;
 	}
 
 	@Override
@@ -69,12 +76,22 @@ public class GraphQLMethodBinding extends BaseMethodBinding<String> {
 	}
 
 	@Override
-	public boolean incomingServerRequestMatchesMethod(RequestDetails theRequest) {
-		if (Constants.OPERATION_NAME_GRAPHQL.equals(theRequest.getOperation())) {
-			return true;
+	public MethodMatchEnum incomingServerRequestMatchesMethod(RequestDetails theRequest) {
+		if (Constants.OPERATION_NAME_GRAPHQL.equals(theRequest.getOperation()) && myMethodRequestType.equals(theRequest.getRequestType())) {
+			return MethodMatchEnum.EXACT;
 		}
 
-		return false;
+		return MethodMatchEnum.NONE;
+	}
+
+	private String getQueryValue(Object[] methodParams) {
+		switch (myMethodRequestType) {
+			case POST:
+				return (String) methodParams[myQueryBodyParamIndex];
+			case GET:
+				return (String) methodParams[myQueryUrlParamIndex];
+		}
+		return null;
 	}
 
 	@Override
@@ -84,7 +101,7 @@ public class GraphQLMethodBinding extends BaseMethodBinding<String> {
 			methodParams[myIdParamIndex] = theRequest.getId();
 		}
 
-		Object response = invokeServerMethod(theServer, theRequest, methodParams);
+		String responseString = (String) invokeServerMethod(theServer, theRequest, methodParams);
 
 		int statusCode = Constants.STATUS_HTTP_200_OK;
 		String statusMessage = Constants.HTTP_STATUS_NAMES.get(statusCode);
@@ -92,20 +109,19 @@ public class GraphQLMethodBinding extends BaseMethodBinding<String> {
 		String charset = Constants.CHARSET_NAME_UTF8;
 		boolean respondGzip = theRequest.isRespondGzip();
 
-		String responseString = (String) response;
-
-		HttpServletRequest servletRequest=null;
-		HttpServletResponse servletResponse=null;
+		HttpServletRequest servletRequest = null;
+		HttpServletResponse servletResponse = null;
 		if (theRequest instanceof ServletRequestDetails) {
 			servletRequest = ((ServletRequestDetails) theRequest).getServletRequest();
 			servletResponse = ((ServletRequestDetails) theRequest).getServletResponse();
 		}
 
+		String graphQLQuery = getQueryValue(methodParams);
 		// Interceptor call: SERVER_OUTGOING_GRAPHQL_RESPONSE
 		HookParams params = new HookParams()
 			.add(RequestDetails.class, theRequest)
 			.addIfMatchesType(ServletRequestDetails.class, theRequest)
-			.add(String.class, theRequest.getParameters().get(Constants.PARAM_GRAPHQL_QUERY)[0])
+			.add(String.class, graphQLQuery)
 			.add(String.class, responseString)
 			.add(HttpServletRequest.class, servletRequest)
 			.add(HttpServletResponse.class, servletResponse);
@@ -129,7 +145,6 @@ public class GraphQLMethodBinding extends BaseMethodBinding<String> {
 		Writer writer = theRequest.getResponse().getResponseWriter(statusCode, statusMessage, contentType, charset, respondGzip);
 		writer.write(responseString);
 		writer.close();
-
 
 		return null;
 	}

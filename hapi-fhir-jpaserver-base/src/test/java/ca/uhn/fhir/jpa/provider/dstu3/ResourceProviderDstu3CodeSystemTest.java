@@ -1,30 +1,29 @@
 package ca.uhn.fhir.jpa.provider.dstu3;
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.FhirVersionEnum;
 import ca.uhn.fhir.jpa.dao.dstu3.FhirResourceDaoDstu3TerminologyTest;
 import ca.uhn.fhir.jpa.term.TermReindexingSvcImpl;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
-import ca.uhn.fhir.util.TestUtil;
 import org.hl7.fhir.dstu3.model.*;
 import org.hl7.fhir.instance.model.api.IBaseOperationOutcome;
 import org.hl7.fhir.instance.model.api.IBaseResource;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class ResourceProviderDstu3CodeSystemTest extends BaseResourceProviderDstu3Test {
 
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(ResourceProviderDstu3CodeSystemTest.class);
-	public static FhirContext ourCtx = FhirContext.forDstu3();
+	public static FhirContext ourCtx = FhirContext.forCached(FhirVersionEnum.DSTU3);
 
-	@Before
+	@BeforeEach
 	@Transactional
 	public void before02() throws IOException {
 		CodeSystem cs = loadResourceFromClasspath(CodeSystem.class, "/extensional-case-3-cs.xml");
@@ -114,10 +113,13 @@ public class ResourceProviderDstu3CodeSystemTest extends BaseResourceProviderDst
 		// Create the code system
 		CodeSystem cs = (CodeSystem) myFhirCtx.newJsonParser().parseResource(input);
 		ourClient.update().resource(cs).execute();
-		runInTransaction(() -> assertEquals(26, myConceptDao.count()));
+		runInTransaction(() -> assertEquals(26L, myConceptDao.count()));
 
 		// Delete the code system
 		ourClient.delete().resource(cs).execute();
+		runInTransaction(() -> assertEquals(26L, myConceptDao.count()));
+
+		myTerminologyDeferredStorageSvc.saveDeferred();
 		runInTransaction(() -> assertEquals(24L, myConceptDao.count()));
 
 	}
@@ -328,10 +330,19 @@ public class ResourceProviderDstu3CodeSystemTest extends BaseResourceProviderDst
 		return ourCtx.newJsonParser().parseResource(theType, loadResource(theFilename));
 	}
 
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
-	}
+	@Test
+	public void testValidateCodeOperation() {
+		
+		Parameters inParams = new Parameters();
+		inParams.addParameter().setName("url").setValue(new UriType("https://url"));
+		inParams.addParameter().setName("code").setValue(new CodeType("1"));
 
+		try {
+			ourClient.operation().onType(CodeSystem.class).named("validate-code").withParameters(inParams).execute();
+			fail();
+		} catch (InvalidRequestException e) {
+			assertEquals("HTTP 400 Bad Request: Invalid request: The FHIR endpoint on this server does not know how to handle POST operation[CodeSystem/$validate-code] with parameters [[]]", e.getMessage());
+		}
+	}
 
 }

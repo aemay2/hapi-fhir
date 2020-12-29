@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.model.entity;
  * #%L
  * HAPI FHIR Model
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,15 +21,27 @@ package ca.uhn.fhir.jpa.model.entity;
  */
 
 import ca.uhn.fhir.rest.api.Constants;
+import org.apache.commons.lang3.builder.ToStringBuilder;
+import org.apache.commons.lang3.builder.ToStringStyle;
 
-import javax.persistence.*;
+import javax.persistence.Column;
+import javax.persistence.Entity;
+import javax.persistence.FetchType;
+import javax.persistence.ForeignKey;
+import javax.persistence.Id;
+import javax.persistence.Index;
+import javax.persistence.JoinColumn;
+import javax.persistence.ManyToOne;
+import javax.persistence.MapsId;
+import javax.persistence.OneToOne;
+import javax.persistence.Table;
 
 @Table(name = "HFJ_RES_VER_PROV", indexes = {
 	@Index(name = "IDX_RESVERPROV_SOURCEURI", columnList = "SOURCE_URI"),
 	@Index(name = "IDX_RESVERPROV_REQUESTID", columnList = "REQUEST_ID")
 })
 @Entity
-public class ResourceHistoryProvenanceEntity {
+public class ResourceHistoryProvenanceEntity extends BasePartitionable {
 
 	public static final int SOURCE_URI_LENGTH = 100;
 
@@ -48,16 +60,24 @@ public class ResourceHistoryProvenanceEntity {
 	@Column(name = "REQUEST_ID", length = Constants.REQUEST_ID_LENGTH, nullable = true)
 	private String myRequestId;
 
-	public ResourceTable getResourceTable() {
-		return myResourceTable;
+	/**
+	 * Constructor
+	 */
+	public ResourceHistoryProvenanceEntity() {
+		super();
+	}
+
+	@Override
+	public String toString() {
+		ToStringBuilder b = new ToStringBuilder(this, ToStringStyle.SHORT_PREFIX_STYLE);
+		b.append("resourceId", myResourceTable.getId());
+		b.append("sourceUri", mySourceUri);
+		b.append("requestId", myRequestId);
+		return b.toString();
 	}
 
 	public void setResourceTable(ResourceTable theResourceTable) {
 		myResourceTable = theResourceTable;
-	}
-
-	public ResourceHistoryTable getResourceHistoryTable() {
-		return myResourceHistoryTable;
 	}
 
 	public void setResourceHistoryTable(ResourceHistoryTable theResourceHistoryTable) {
@@ -79,5 +99,10 @@ public class ResourceHistoryProvenanceEntity {
 	public void setRequestId(String theRequestId) {
 		myRequestId = theRequestId;
 	}
+
+	public Long getId() {
+		return myId;
+	}
+
 
 }

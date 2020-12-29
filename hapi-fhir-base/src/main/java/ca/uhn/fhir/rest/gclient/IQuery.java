@@ -16,7 +16,7 @@ import java.util.Map;
  * #%L
  * HAPI FHIR - Core Library
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,6 +50,16 @@ public interface IQuery<Y> extends IBaseQuery<IQuery<Y>>, IClientExecutable<IQue
 	IQuery<Y> count(int theCount);
 
 	/**
+	 * Specifies the <code>_offset</code> parameter, which indicates to the server the offset of the query. Use
+	 * with {@link #count(int)}.
+	 *
+	 * This parameter is not part of the FHIR standard, all servers might not implement it.
+	 *
+	 * @since 5.2
+	 */
+	IQuery<Y> offset(int theOffset);
+
+	/**
 	 * Add an "_include" specification or an "_include:recurse" specification. If you are using
 	 * a constant from one of the built-in structures you can select whether you want recursive
 	 * behaviour by using the following syntax:
@@ -72,6 +82,7 @@ public interface IQuery<Y> extends IBaseQuery<IQuery<Y>>, IClientExecutable<IQue
 	 * on a single page.
 	 *
 	 * @deprecated This parameter is badly named, since FHIR calls this parameter "_count" and not "_limit". Use {@link #count(int)} instead (it also sets the _count parameter)
+	 * @see #count(int)
 	 */
 	@Deprecated
 	IQuery<Y> limitTo(int theLimitTo);

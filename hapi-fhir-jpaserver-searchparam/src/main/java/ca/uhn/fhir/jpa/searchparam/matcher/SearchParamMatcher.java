@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.searchparam.matcher;
  * #%L
  * HAPI FHIR Search Parameters
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,9 @@ package ca.uhn.fhir.jpa.searchparam.matcher;
  * #L%
  */
 
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
+import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
 import ca.uhn.fhir.jpa.searchparam.extractor.ResourceIndexedSearchParams;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import org.hl7.fhir.instance.model.api.IBaseResource;
@@ -29,6 +32,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class SearchParamMatcher {
 	@Autowired
+	private FhirContext myFhirContext;
+	@Autowired
 	private IndexedSearchParamExtractor myIndexedSearchParamExtractor;
 	@Autowired
 	private InMemoryResourceMatcher myInMemoryResourceMatcher;
@@ -36,5 +41,14 @@ public class SearchParamMatcher {
 	public InMemoryMatchResult match(String theCriteria, IBaseResource theResource, RequestDetails theRequest) {
 		ResourceIndexedSearchParams resourceIndexedSearchParams = myIndexedSearchParamExtractor.extractIndexedSearchParams(theResource, theRequest);
 		return myInMemoryResourceMatcher.match(theCriteria, theResource, resourceIndexedSearchParams);
+	}
+
+	public InMemoryMatchResult match(SearchParameterMap theSearchParameterMap, IBaseResource theResource) {
+		if (theSearchParameterMap.isEmpty()) {
+			return InMemoryMatchResult.successfulMatch();
+		}
+		ResourceIndexedSearchParams resourceIndexedSearchParams = myIndexedSearchParamExtractor.extractIndexedSearchParams(theResource, null);
+		RuntimeResourceDefinition resourceDefinition = myFhirContext.getResourceDefinition(theResource);
+		return myInMemoryResourceMatcher.match(theSearchParameterMap, theResource, resourceDefinition, resourceIndexedSearchParams);
 	}
 }

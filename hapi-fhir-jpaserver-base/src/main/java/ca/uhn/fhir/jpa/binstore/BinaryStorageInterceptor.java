@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.binstore;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,13 +26,19 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.interceptor.api.Hook;
 import ca.uhn.fhir.interceptor.api.Interceptor;
 import ca.uhn.fhir.interceptor.api.Pointcut;
+import ca.uhn.fhir.jpa.dao.BaseHapiFhirDao;
 import ca.uhn.fhir.jpa.model.util.JpaConstants;
+import ca.uhn.fhir.rest.api.server.storage.TransactionDetails;
 import ca.uhn.fhir.rest.api.server.IPreResourceShowDetails;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
-import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
+import ca.uhn.fhir.util.HapiExtensions;
 import ca.uhn.fhir.util.IModelVisitor2;
 import org.apache.commons.io.FileUtils;
-import org.hl7.fhir.instance.model.api.*;
+import org.hl7.fhir.instance.model.api.IBase;
+import org.hl7.fhir.instance.model.api.IBaseHasExtensions;
+import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.instance.model.api.IIdType;
+import org.hl7.fhir.instance.model.api.IPrimitiveType;
 import org.hl7.fhir.r4.model.IdType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,10 +50,15 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+
+import static ca.uhn.fhir.util.HapiExtensions.EXT_EXTERNALIZED_BINARY_ID;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 @Interceptor
 public class BinaryStorageInterceptor {
@@ -59,7 +70,6 @@ public class BinaryStorageInterceptor {
 	private FhirContext myCtx;
 	@Autowired
 	private BinaryAccessProvider myBinaryAccessProvider;
-
 	private Class<? extends IPrimitiveType<byte[]>> myBinaryType;
 	private String myDeferredListKey;
 	private long myAutoDeExternalizeMaximumBytes = 10 * FileUtils.ONE_MB;
@@ -83,7 +93,9 @@ public class BinaryStorageInterceptor {
 	@SuppressWarnings("unchecked")
 	@PostConstruct
 	public void start() {
-		myBinaryType = (Class<? extends IPrimitiveType<byte[]>>) myCtx.getElementDefinition("base64Binary").getImplementingClass();
+		BaseRuntimeElementDefinition<?> base64Binary = myCtx.getElementDefinition("base64Binary");
+		assert base64Binary != null;
+		myBinaryType = (Class<? extends IPrimitiveType<byte[]>>) base64Binary.getImplementingClass();
 		myDeferredListKey = getClass().getName() + "_" + hashCode() + "_DEFERRED_LIST";
 	}
 
@@ -95,8 +107,8 @@ public class BinaryStorageInterceptor {
 		List<String> attachmentIds = binaryElements
 			.stream()
 			.flatMap(t -> ((IBaseHasExtensions) t).getExtension().stream())
-			.filter(t -> JpaConstants.EXT_EXTERNALIZED_BINARY_ID.equals(t.getUrl()))
-			.map(t -> ((IPrimitiveType) t.getValue()).getValueAsString())
+			.filter(t -> HapiExtensions.EXT_EXTERNALIZED_BINARY_ID.equals(t.getUrl()))
+			.map(t -> ((IPrimitiveType<?>) t.getValue()).getValueAsString())
 			.collect(Collectors.toList());
 
 		for (String next : attachmentIds) {
@@ -109,23 +121,68 @@ public class BinaryStorageInterceptor {
 	}
 
 	@Hook(Pointcut.STORAGE_PRESTORAGE_RESOURCE_CREATED)
-	public void extractLargeBinariesBeforeCreate(ServletRequestDetails theRequestDetails, IBaseResource theResource, Pointcut thePoincut) throws IOException {
-		extractLargeBinaries(theRequestDetails, theResource, thePoincut);
+	public void extractLargeBinariesBeforeCreate(TransactionDetails theTransactionDetails, IBaseResource theResource, Pointcut thePointcut) throws IOException {
+		extractLargeBinaries(theTransactionDetails, theResource, thePointcut);
 	}
 
 	@Hook(Pointcut.STORAGE_PRESTORAGE_RESOURCE_UPDATED)
-	public void extractLargeBinariesBeforeUpdate(ServletRequestDetails theRequestDetails, IBaseResource theResource, Pointcut thePoincut) throws IOException {
-		extractLargeBinaries(theRequestDetails, theResource, thePoincut);
+	public void extractLargeBinariesBeforeUpdate(TransactionDetails theTransactionDetails, IBaseResource thePreviousResource, IBaseResource theResource, Pointcut thePointcut) throws IOException {
+		blockIllegalExternalBinaryIds(thePreviousResource, theResource);
+		extractLargeBinaries(theTransactionDetails, theResource, thePointcut);
 	}
 
-	private void extractLargeBinaries(ServletRequestDetails theRequestDetails, IBaseResource theResource, Pointcut thePoincut) throws IOException {
-		if (theRequestDetails == null) {
-			// RequestDetails will only be null for internal HAPI events.  If externalization is required for them it will need to be done in a different way.
-			return;
+	/**
+	 * Don't allow clients to submit resources with binary storage attachments declared unless the ID was already in the
+	 * resource. In other words, only HAPI itself may add a binary storage ID extension to a resource unless that
+	 * extension was already present.
+	 */
+	private void blockIllegalExternalBinaryIds(IBaseResource thePreviousResource, IBaseResource theResource) {
+		Set<String> existingBinaryIds = new HashSet<>();
+		if (thePreviousResource != null) {
+			List<? extends IPrimitiveType<byte[]>> base64fields = myCtx.newTerser().getAllPopulatedChildElementsOfType(thePreviousResource, myBinaryType);
+			for (IPrimitiveType<byte[]> nextBase64 : base64fields) {
+				if (nextBase64 instanceof IBaseHasExtensions) {
+					((IBaseHasExtensions) nextBase64)
+						.getExtension()
+						.stream()
+						.filter(t -> t.getUserData(JpaConstants.EXTENSION_EXT_SYSTEMDEFINED) == null)
+						.filter(t -> EXT_EXTERNALIZED_BINARY_ID.equals(t.getUrl()))
+						.map(t -> (IPrimitiveType<?>) t.getValue())
+						.map(t -> t.getValueAsString())
+						.filter(t -> isNotBlank(t))
+						.forEach(t -> existingBinaryIds.add(t));
+				}
+			}
 		}
+
+		List<? extends IPrimitiveType<byte[]>> base64fields = myCtx.newTerser().getAllPopulatedChildElementsOfType(theResource, myBinaryType);
+		for (IPrimitiveType<byte[]> nextBase64 : base64fields) {
+			if (nextBase64 instanceof IBaseHasExtensions) {
+				Optional<String> hasExternalizedBinaryReference = ((IBaseHasExtensions) nextBase64)
+					.getExtension()
+					.stream()
+					.filter(t -> t.getUserData(JpaConstants.EXTENSION_EXT_SYSTEMDEFINED) == null)
+					.filter(t -> t.getUrl().equals(EXT_EXTERNALIZED_BINARY_ID))
+					.map(t -> (IPrimitiveType<?>) t.getValue())
+					.map(t -> t.getValueAsString())
+					.filter(t -> isNotBlank(t))
+					.filter(t -> !existingBinaryIds.contains(t))
+					.findFirst();
+
+				if (hasExternalizedBinaryReference.isPresent()) {
+					String msg = myCtx.getLocalizer().getMessage(BaseHapiFhirDao.class, "externalizedBinaryStorageExtensionFoundInRequestBody", EXT_EXTERNALIZED_BINARY_ID, hasExternalizedBinaryReference.get());
+					throw new InvalidRequestException(msg);
+				}
+			}
+		}
+
+	}
+
+	private void extractLargeBinaries(TransactionDetails theTransactionDetails, IBaseResource theResource, Pointcut thePointcut) throws IOException {
+
 		IIdType resourceId = theResource.getIdElement();
 		if (!resourceId.hasResourceType() && resourceId.hasIdPart()) {
-			String resourceType = myCtx.getResourceDefinition(theResource).getName();
+			String resourceType = myCtx.getResourceType(theResource);
 			resourceId = new IdType(resourceType + "/" + resourceId.getIdPart());
 		}
 
@@ -145,9 +202,9 @@ public class BinaryStorageInterceptor {
 						StoredDetails storedDetails = myBinaryStorageSvc.storeBlob(resourceId, null, nextContentType, inputStream);
 						newBlobId = storedDetails.getBlobId();
 					} else {
-						assert thePoincut == Pointcut.STORAGE_PRESTORAGE_RESOURCE_CREATED : thePoincut.name();
+						assert thePointcut == Pointcut.STORAGE_PRESTORAGE_RESOURCE_CREATED : thePointcut.name();
 						newBlobId = myBinaryStorageSvc.newBlobId();
-						List<DeferredBinaryTarget> deferredBinaryTargets = getOrCreateDeferredBinaryStorageMap(theRequestDetails);
+						List<DeferredBinaryTarget> deferredBinaryTargets = getOrCreateDeferredBinaryStorageMap(theTransactionDetails);
 						DeferredBinaryTarget newDeferredBinaryTarget = new DeferredBinaryTarget(newBlobId, nextTarget, data);
 						deferredBinaryTargets.add(newDeferredBinaryTarget);
 					}
@@ -157,26 +214,20 @@ public class BinaryStorageInterceptor {
 			}
 
 		}
+
 	}
 
 	@Nonnull
-	@SuppressWarnings("unchecked")
-	private List<DeferredBinaryTarget> getOrCreateDeferredBinaryStorageMap(ServletRequestDetails theRequestDetails) {
-		List<DeferredBinaryTarget> deferredBinaryTargets = (List<DeferredBinaryTarget>) theRequestDetails.getUserData().get(getDeferredListKey());
-		if (deferredBinaryTargets == null) {
-			deferredBinaryTargets = new ArrayList<>();
-			theRequestDetails.getUserData().put(getDeferredListKey(), deferredBinaryTargets);
-		}
-		return deferredBinaryTargets;
+	private List<DeferredBinaryTarget> getOrCreateDeferredBinaryStorageMap(TransactionDetails theTransactionDetails) {
+		return theTransactionDetails.getOrCreateUserData(getDeferredListKey(), () -> new ArrayList<>());
 	}
 
-	@SuppressWarnings("unchecked")
 	@Hook(Pointcut.STORAGE_PRECOMMIT_RESOURCE_CREATED)
-	public void storeLargeBinariesBeforeCreatePersistence(ServletRequestDetails theRequestDetails, IBaseResource theResource, Pointcut thePoincut) throws IOException {
-		if (theRequestDetails == null) {
+	public void storeLargeBinariesBeforeCreatePersistence(TransactionDetails theTransactionDetails, IBaseResource theResource, Pointcut thePoincut) throws IOException {
+		if (theTransactionDetails == null) {
 			return;
 		}
-		List<DeferredBinaryTarget> deferredBinaryTargets = (List<DeferredBinaryTarget>) theRequestDetails.getUserData().get(getDeferredListKey());
+		List<DeferredBinaryTarget> deferredBinaryTargets = theTransactionDetails.getUserData(getDeferredListKey());
 		if (deferredBinaryTargets != null) {
 			IIdType resourceId = theResource.getIdElement();
 			for (DeferredBinaryTarget next : deferredBinaryTargets) {
@@ -234,9 +285,7 @@ public class BinaryStorageInterceptor {
 				if (theElement.getClass().equals(myBinaryType)) {
 					IBase parent = theContainingElementPath.get(theContainingElementPath.size() - 2);
 					Optional<IBinaryTarget> binaryTarget = myBinaryAccessProvider.toBinaryTarget(parent);
-					if (binaryTarget.isPresent()) {
-						binaryTargets.add(binaryTarget.get());
-					}
+					binaryTarget.ifPresent(binaryTargets::add);
 				}
 				return true;
 			}

@@ -6,7 +6,7 @@ import java.util.Collection;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,10 +32,10 @@ import ca.uhn.fhir.jpa.model.entity.ResourceTag;
 public interface IResourceTagDao extends JpaRepository<ResourceTag, Long> {
 	@Query("" + 
 			   "SELECT t FROM ResourceTag t " + 
-			   "INNER JOIN TagDefinition td ON (td.myId = t.myTagId) " + 
+			   "INNER JOIN FETCH t.myTag td " +
 			   "WHERE t.myResourceId in (:pids)")
 	Collection<ResourceTag> findByResourceIds(@Param("pids") Collection<Long> pids);
 
 	@Modifying
-	@Query("delete from ResourceTag t WHERE t.myResourceId = :resid")
-	void deleteByResourceId(@Param("resid") Long theResourcePid);}
+	@Query("delete from ResourceTag t WHERE t.myResourceId = :resId")
+	void deleteByResourceId(@Param("resId") Long theResourcePid);}

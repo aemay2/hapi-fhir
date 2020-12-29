@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.migrate.taskdef;
  * #%L
  * HAPI FHIR JPA Server - Migration
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,11 @@ package ca.uhn.fhir.jpa.migrate.taskdef;
  * #L%
  */
 
+import ca.uhn.fhir.jpa.migrate.DriverTypeEnum;
 import ca.uhn.fhir.jpa.migrate.JdbcUtils;
 import org.apache.commons.lang3.Validate;
+import org.apache.commons.lang3.builder.EqualsBuilder;
+import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.thymeleaf.util.StringUtils;
@@ -32,12 +35,16 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-public class AddIndexTask extends BaseTableTask<AddIndexTask> {
+public class AddIndexTask extends BaseTableTask {
 
 	private static final Logger ourLog = LoggerFactory.getLogger(AddIndexTask.class);
 	private String myIndexName;
 	private List<String> myColumns;
 	private Boolean myUnique;
+
+	public AddIndexTask(String theProductVersion, String theSchemaVersion) {
+		super(theProductVersion, theSchemaVersion);
+	}
 
 	public void setIndexName(String theIndexName) {
 		myIndexName = StringUtils.toUpperCase(theIndexName, Locale.US);
@@ -55,23 +62,35 @@ public class AddIndexTask extends BaseTableTask<AddIndexTask> {
 	public void validate() {
 		super.validate();
 		Validate.notBlank(myIndexName, "Index name not specified");
-		Validate.isTrue(myColumns.size() > 0, "Columns not specified");
+		Validate.isTrue(myColumns.size() > 0, "Columns not specified for AddIndexTask " + myIndexName + " on table " + getTableName());
 		Validate.notNull(myUnique, "Uniqueness not specified");
+		setDescription("Add " + myIndexName + " index to table " + getTableName());
 	}
 
 	@Override
-	public void execute() throws SQLException {
+	public void doExecute() throws SQLException {
 		Set<String> indexNames = JdbcUtils.getIndexNames(getConnectionProperties(), getTableName());
 		if (indexNames.contains(myIndexName)) {
-			ourLog.info("Index {} already exists on table {} - No action performed", myIndexName, getTableName());
+			logInfo(ourLog, "Index {} already exists on table {} - No action performed", myIndexName, getTableName());
 			return;
 		}
 
-		ourLog.info("Going to add a {} index named {} on table {} for columns {}", (myUnique ? "UNIQUE" : "NON-UNIQUE"), myIndexName, getTableName(), myColumns);
+		logInfo(ourLog, "Going to add a {} index named {} on table {} for columns {}", (myUnique ? "UNIQUE" : "NON-UNIQUE"), myIndexName, getTableName(), myColumns);
 
 		String unique = myUnique ? "unique " : "";
 		String columns = String.join(", ", myColumns);
-		String sql = "create " + unique + "index " + myIndexName + " on " + getTableName() + "(" + columns + ")";
+		String mssqlWhereClause = "";
+		if (myUnique && getDriverType() == DriverTypeEnum.MSSQL_2012) {
+			mssqlWhereClause = " WHERE (";
+			for (int i = 0; i <myColumns.size(); i++) {
+				mssqlWhereClause += myColumns.get(i) + " IS NOT NULL ";
+				if (i < myColumns.size() - 1) {
+					mssqlWhereClause += "AND ";
+				}
+			}
+			mssqlWhereClause += ")";
+		}
+		String sql = "create " + unique + "index " + myIndexName + " on " + getTableName() + "(" + columns + ")" + mssqlWhereClause;
 		String tableName = getTableName();
 
 		try {
@@ -87,5 +106,24 @@ public class AddIndexTask extends BaseTableTask<AddIndexTask> {
 
 	public void setColumns(String... theColumns) {
 		setColumns(Arrays.asList(theColumns));
+	}
+
+	@Override
+	protected void generateEquals(EqualsBuilder theBuilder, BaseTask theOtherObject) {
+		super.generateEquals(theBuilder, theOtherObject);
+
+		AddIndexTask otherObject = (AddIndexTask) theOtherObject;
+		theBuilder.append(myIndexName, otherObject.myIndexName);
+		theBuilder.append(myColumns, otherObject.myColumns);
+		theBuilder.append(myUnique, otherObject.myUnique);
+
+	}
+
+	@Override
+	protected void generateHashCode(HashCodeBuilder theBuilder) {
+		super.generateHashCode(theBuilder);
+		theBuilder.append(myIndexName);
+		theBuilder.append(myColumns);
+		theBuilder.append(myUnique);
 	}
 }

@@ -4,7 +4,7 @@ package ca.uhn.fhir.rest.server.interceptor.auth;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.apache.commons.lang3.StringUtils.defaultString;
@@ -53,7 +59,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
  * has permission to perform the given action.
  * <p>
  * See the HAPI FHIR
- * <a href="http://jamesagnew.github.io/hapi-fhir/doc_rest_server_security.html">Documentation on Server Security</a>
+ * <a href="https://hapifhir.io/hapi-fhir/docs/security/introduction.html">Documentation on Server Security</a>
  * for information on how to use this interceptor.
  * </p>
  *
@@ -108,10 +114,13 @@ public class AuthorizationInterceptor implements IRuleApplier {
 			theRequestDetails.getUserData().put(myRequestRuleListKey, rules);
 		}
 		Set<AuthorizationFlagsEnum> flags = getFlags();
-		ourLog.trace("Applying {} rules to render an auth decision for operation {}", rules.size(), theOperation);
+		ourLog.trace("Applying {} rules to render an auth decision for operation {}, theInputResource type={}, theOutputResource type={} ", rules.size(), theOperation,
+			((theInputResource != null) && (theInputResource.getIdElement() != null)) ? theInputResource.getIdElement().getResourceType() : "",
+			((theOutputResource != null) && (theOutputResource.getIdElement() != null)) ? theOutputResource.getIdElement().getResourceType() : "");
 
 		Verdict verdict = null;
 		for (IAuthRule nextRule : rules) {
+			ourLog.trace("Rule being applied - {}", nextRule);
 			verdict = nextRule.applyRule(theOperation, theRequestDetails, theInputResource, theInputResourceId, theOutputResource, this, flags, thePointcut);
 			if (verdict != null) {
 				ourLog.trace("Rule {} returned decision {}", nextRule, verdict.getDecision());
@@ -199,7 +208,7 @@ public class AuthorizationInterceptor implements IRuleApplier {
 				return OperationExamineDirection.NONE;
 
 			case GRAPHQL_REQUEST:
-				return OperationExamineDirection.IN;
+				return OperationExamineDirection.BOTH;
 
 			default:
 				// Should not happen
@@ -220,9 +229,10 @@ public class AuthorizationInterceptor implements IRuleApplier {
 	 *
 	 * @param theDefaultPolicy The policy (must not be <code>null</code>)
 	 */
-	public void setDefaultPolicy(PolicyEnum theDefaultPolicy) {
+	public AuthorizationInterceptor setDefaultPolicy(PolicyEnum theDefaultPolicy) {
 		Validate.notNull(theDefaultPolicy, "theDefaultPolicy must not be null");
 		myDefaultPolicy = theDefaultPolicy;
+		return this;
 	}
 
 	/**
@@ -336,6 +346,11 @@ public class AuthorizationInterceptor implements IRuleApplier {
 		checkPointcutAndFailIfDeny(theRequestDetails, thePointcut, theResourceToDelete);
 	}
 
+	@Hook(Pointcut.STORAGE_PRE_DELETE_EXPUNGE)
+	public void hookDeleteExpunge(RequestDetails theRequestDetails, Pointcut thePointcut) {
+		applyRulesAndFailIfDeny(theRequestDetails.getRestOperationType(), theRequestDetails, null, null, null, thePointcut);
+	}
+
 	private void checkPointcutAndFailIfDeny(RequestDetails theRequestDetails, Pointcut thePointcut, @Nonnull IBaseResource theInputResource) {
 		applyRulesAndFailIfDeny(theRequestDetails.getRestOperationType(), theRequestDetails, theInputResource, theInputResource.getIdElement(), null, thePointcut);
 	}
@@ -419,7 +434,7 @@ public class AuthorizationInterceptor implements IRuleApplier {
 		private final IAuthRule myDecidingRule;
 		private final PolicyEnum myDecision;
 
-		Verdict(PolicyEnum theDecision, IAuthRule theDecidingRule) {
+		public Verdict(PolicyEnum theDecision, IAuthRule theDecidingRule) {
 			Validate.notNull(theDecision);
 
 			myDecision = theDecision;

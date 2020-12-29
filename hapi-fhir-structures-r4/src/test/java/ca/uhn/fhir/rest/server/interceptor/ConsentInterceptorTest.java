@@ -30,26 +30,35 @@ import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.OperationOutcome;
 import org.hl7.fhir.r4.model.Patient;
-import org.junit.*;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.not;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
-//import static org.hamcrest.Matchers.any;
-
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class ConsentInterceptorTest {
 
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(ConsentInterceptorTest.class);
@@ -67,12 +76,12 @@ public class ConsentInterceptorTest {
 	@Captor
 	private ArgumentCaptor<BaseServerResponseException> myExceptionCaptor;
 
-	@After
+	@AfterEach
 	public void after() {
 		ourServlet.unregisterInterceptor(myInterceptor);
 	}
 
-	@Before
+	@BeforeEach
 	public void before() {
 		myInterceptor = new ConsentInterceptor(myConsentSvc);
 		ourServlet.registerInterceptor(myInterceptor);
@@ -201,12 +210,13 @@ public class ConsentInterceptorTest {
 			assertThat(responseContent, containsString("A DIAG"));
 		}
 
-		verify(myConsentSvc, times(1)).startOperation(any(), any());
-		verify(myConsentSvc, times(2)).canSeeResource(any(), any(), any());
-		verify(myConsentSvc, times(3)).willSeeResource(any(), any(), any());
-		verify(myConsentSvc, times(1)).completeOperationSuccess(any(), any());
-		verify(myConsentSvc, times(0)).completeOperationFailure(any(), any(), any());
+		verify(myConsentSvc, timeout(10000).times(1)).startOperation(any(), any());
+		verify(myConsentSvc, timeout(10000).times(2)).canSeeResource(any(), any(), any());
+		verify(myConsentSvc, timeout(10000).times(3)).willSeeResource(any(), any(), any());
+		verify(myConsentSvc, timeout(10000).times(1)).completeOperationSuccess(any(), any());
+		verify(myConsentSvc, timeout(10000).times(0)).completeOperationFailure(any(), any(), any());
 		verifyNoMoreInteractions(myConsentSvc);
+
 	}
 
 	@Test
@@ -241,6 +251,7 @@ public class ConsentInterceptorTest {
 		ourPatientProvider.store((Patient) new Patient().setActive(true).setId("PTA"));
 		ourPatientProvider.store((Patient) new Patient().setActive(false).setId("PTB"));
 
+		reset(myConsentSvc);
 		when(myConsentSvc.startOperation(any(), any())).thenReturn(ConsentOutcome.PROCEED);
 		when(myConsentSvc.canSeeResource(any(), any(), any())).thenReturn(ConsentOutcome.PROCEED);
 		when(myConsentSvc.willSeeResource(any(RequestDetails.class), any(IBaseResource.class), any())).thenAnswer(t->{
@@ -266,10 +277,10 @@ public class ConsentInterceptorTest {
 			assertEquals("PTB", response.getEntry().get(1).getResource().getIdElement().getIdPart());
 		}
 
-		verify(myConsentSvc, times(1)).startOperation(any(), any());
-		verify(myConsentSvc, times(2)).canSeeResource(any(), any(), any());
-		verify(myConsentSvc, times(3)).willSeeResource(any(), any(), any());
-		verify(myConsentSvc, times(1)).completeOperationSuccess(any(), any());
+		verify(myConsentSvc, timeout(1000).times(1)).startOperation(any(), any());
+		verify(myConsentSvc, timeout(1000).times(2)).canSeeResource(any(), any(), any());
+		verify(myConsentSvc, timeout(1000).times(3)).willSeeResource(any(), any(), any());
+		verify(myConsentSvc, timeout(1000).times(1)).completeOperationSuccess(any(), any());
 		verify(myConsentSvc, times(0)).completeOperationFailure(any(), any(), any());
 		verifyNoMoreInteractions(myConsentSvc);
 	}
@@ -385,13 +396,13 @@ public class ConsentInterceptorTest {
 
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void afterClass() throws Exception {
 		JettyUtil.closeServer(ourServer);
 		ourClient.close();
 	}
 
-	@BeforeClass
+	@BeforeAll
 	public static void beforeClass() throws Exception {
 		ourServer = new Server(0);
 

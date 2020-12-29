@@ -24,7 +24,7 @@ import ca.uhn.fhir.rest.api.SearchTotalModeEnum;
 public class ${className}ResourceProvider extends 
 ## We have specialized base classes for RPs that handle certain resource types. These
 ## RPs implement type specific operations 
-#if ( $version != 'dstu' && (${className} == 'Encounter' || ${className} == 'Patient' || ${className} == 'ValueSet' || ${className} == 'QuestionnaireAnswers' || ${className} == 'CodeSystem' || ($version != 'dstu2' && ${className} == 'ConceptMap') || ${className} == 'MessageHeader' || ${className} == 'Composition' || ${className} == 'StructureDefinition'))
+#if ( $version != 'dstu' && (${className} == 'Encounter' || ${className} == 'Patient' || ${className} == 'ValueSet' || ${className} == 'QuestionnaireAnswers' || ${className} == 'CodeSystem' || ($version != 'dstu2' && ${className} == 'ConceptMap') || ${className} == 'MessageHeader' || ${className} == 'Composition' || ${className} == 'StructureDefinition' || ($version != 'dstu2' && ${className} == 'Observation') ))
 	BaseJpaResourceProvider${className}${versionCapitalized}
 #else
 	JpaResourceProvider${versionCapitalized}<${className}>
@@ -65,7 +65,11 @@ public class ${className}ResourceProvider extends
   
 			@Description(shortDefinition="Search for resources which have the given profile")
 			@OptionalParam(name=ca.uhn.fhir.rest.api.Constants.PARAM_PROFILE)
-			UriAndListParam theSearchForProfile, 
+			UriAndListParam theSearchForProfile,
+
+			@Description(shortDefinition="Search for resources which have the given source value (Resource.meta.source)")
+			@OptionalParam(name=ca.uhn.fhir.rest.api.Constants.PARAM_SOURCE)
+			UriAndListParam theSearchForSource,
 
 			@Description(shortDefinition="Return resources linked to by the given target")
 			@OptionalParam(name="_has")
@@ -129,6 +133,9 @@ public class ${className}ResourceProvider extends
 			@ca.uhn.fhir.rest.annotation.Count
 			Integer theCount,
 
+			@ca.uhn.fhir.rest.annotation.Offset
+			Integer theOffset,
+
 			SummaryEnum theSummaryMode,
 
 			SearchTotalModeEnum theSearchTotalMode
@@ -143,6 +150,7 @@ public class ${className}ResourceProvider extends
 			paramMap.add(ca.uhn.fhir.rest.api.Constants.PARAM_TAG, theSearchForTag);
 			paramMap.add(ca.uhn.fhir.rest.api.Constants.PARAM_SECURITY, theSearchForSecurity);
 			paramMap.add(ca.uhn.fhir.rest.api.Constants.PARAM_PROFILE, theSearchForProfile);
+			paramMap.add(ca.uhn.fhir.rest.api.Constants.PARAM_SOURCE, theSearchForSource);
 			paramMap.add("_has", theHas);
 #foreach ( $param in $searchParams ) 
 			paramMap.add("${param.name}", the${param.nameCapitalized});
@@ -154,6 +162,7 @@ public class ${className}ResourceProvider extends
 			paramMap.setIncludes(theIncludes);
 			paramMap.setSort(theSort);
 			paramMap.setCount(theCount);
+			paramMap.setOffset(theOffset);
 			paramMap.setSummaryMode(theSummaryMode);
 			paramMap.setSearchTotalMode(theSearchTotalMode);
 

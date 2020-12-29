@@ -10,18 +10,19 @@ import ca.uhn.fhir.rest.annotation.Search;
 import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.EncodingEnum;
 import ca.uhn.fhir.rest.api.SearchStyleEnum;
+import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.rest.client.api.IGenericClient;
 import ca.uhn.fhir.rest.client.interceptor.LoggingInterceptor;
 import ca.uhn.fhir.rest.gclient.StringClientParam;
 import ca.uhn.fhir.rest.param.TokenAndListParam;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+import ca.uhn.fhir.test.utilities.JettyUtil;
 import ca.uhn.fhir.util.TestUtil;
 import ca.uhn.fhir.util.UrlUtil;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
 import com.google.common.collect.Lists;
 import org.apache.commons.io.IOUtils;
-import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -31,11 +32,17 @@ import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.servlet.ServletHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.hl7.fhir.instance.model.api.IBaseResource;
-import org.hl7.fhir.r4.model.*;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.hl7.fhir.r4.model.Bundle;
+import org.hl7.fhir.r4.model.HumanName;
+import org.hl7.fhir.r4.model.Medication;
+import org.hl7.fhir.r4.model.MedicationRequest;
+import org.hl7.fhir.r4.model.OperationOutcome;
+import org.hl7.fhir.r4.model.Patient;
+import org.hl7.fhir.r4.model.Reference;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -44,10 +51,13 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
-
-import ca.uhn.fhir.test.utilities.JettyUtil;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class SearchR4Test {
 
@@ -60,13 +70,22 @@ public class SearchR4Test {
 
 	private static Server ourServer;
 
-	@Before
+	@BeforeEach
 	public void before() {
 		ourLastMethod = null;
 		ourIdentifiers = null;
 	}
 
-	private Bundle executeAndReturnLinkNext(HttpGet httpGet, EncodingEnum theExpectEncoding) throws IOException, ClientProtocolException {
+	private Bundle executeSearchAndValidateHasLinkNext(HttpGet httpGet, EncodingEnum theExpectEncoding) throws IOException {
+		Bundle bundle = executeSearch(httpGet, theExpectEncoding);
+		String linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
+		assertNotNull(linkNext);
+
+		assertEquals(10, bundle.getEntry().size());
+		return bundle;
+	}
+
+	private Bundle executeSearch(HttpGet httpGet, EncodingEnum theExpectEncoding) throws IOException {
 		Bundle bundle;
 		try (CloseableHttpResponse status = ourClient.execute(httpGet)) {
 			String responseContent = IOUtils.toString(status.getEntity().getContent(), StandardCharsets.UTF_8);
@@ -76,9 +95,6 @@ public class SearchR4Test {
 			assertEquals(theExpectEncoding, ct);
 			bundle = ct.newParser(ourCtx).parseResource(Bundle.class, responseContent);
 			validate(bundle);
-			assertEquals(10, bundle.getEntry().size());
-			String linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
-			assertNotNull(linkNext);
 		}
 		return bundle;
 	}
@@ -87,9 +103,8 @@ public class SearchR4Test {
 	 * A paging request that incorrectly executes at the type level shouldn't be grabbed by the search method binding
 	 */
 	@Test
-	public void tesPageRequestCantTriggerSearchAccidentally() throws Exception {
+	public void testPageRequestCantTriggerSearchAccidentally() throws Exception {
 		HttpGet httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient?" + Constants.PARAM_PAGINGACTION + "=12345");
-		Bundle bundle;
 		try (CloseableHttpResponse status = ourClient.execute(httpGet)) {
 			String responseContent = IOUtils.toString(status.getEntity().getContent(), StandardCharsets.UTF_8);
 			ourLog.info(responseContent);
@@ -97,6 +112,21 @@ public class SearchR4Test {
 			assertThat(responseContent, containsString("not know how to handle GET operation[Patient] with parameters [[_getpages]]"));
 		}
 	}
+
+
+	/**
+	 * See #1763
+	 */
+	@Test
+	public void testSummaryCount() throws Exception {
+		HttpGet httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient?identifier=foo%7Cbar&"+Constants.PARAM_SUMMARY + "=" + SummaryEnum.COUNT.getCode());
+		Bundle bundle = executeSearch(httpGet, EncodingEnum.JSON);
+		ourLog.info(toJson(bundle));
+		assertEquals(200, bundle.getTotal());
+		assertEquals("searchset", bundle.getType().toCode());
+		assertEquals(0, bundle.getEntry().size());
+	}
+
 
 
 	@Test
@@ -108,7 +138,7 @@ public class SearchR4Test {
 
 		// Initial search
 		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient?identifier=foo%7Cbar&_elements=name&_elements:exclude=birthDate,active");
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		assertThat(toJson(bundle), not(containsString("\"active\"")));
 		linkSelf = bundle.getLink(Constants.LINK_SELF).getUrl();
 		assertThat(linkSelf, containsString("_elements=name"));
@@ -119,7 +149,7 @@ public class SearchR4Test {
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		assertThat(toJson(bundle), not(containsString("\"active\"")));
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_elements=name"));
@@ -127,7 +157,7 @@ public class SearchR4Test {
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		assertThat(toJson(bundle), not(containsString("\"active\"")));
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_elements=name"));
@@ -135,7 +165,7 @@ public class SearchR4Test {
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		assertThat(toJson(bundle), not(containsString("\"active\"")));
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_elements=name"));
@@ -204,25 +234,25 @@ public class SearchR4Test {
 
 		// Initial search
 		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient?identifier=foo%7Cbar&_format=" + Constants.CT_FHIR_JSON_NEW);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=" + UrlUtil.escapeUrlParam(Constants.CT_FHIR_JSON_NEW)));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=" + UrlUtil.escapeUrlParam(Constants.CT_FHIR_JSON_NEW)));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=" + UrlUtil.escapeUrlParam(Constants.CT_FHIR_JSON_NEW)));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=" + UrlUtil.escapeUrlParam(Constants.CT_FHIR_JSON_NEW)));
 
@@ -236,26 +266,26 @@ public class SearchR4Test {
 
 		// Initial search
 		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient?identifier=foo%7Cbar&_format=json");
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		assertThat(toJson(bundle), containsString("active"));
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=json"));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=json"));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=json"));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=json"));
 
@@ -269,25 +299,25 @@ public class SearchR4Test {
 
 		// Initial search
 		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient?identifier=foo%7Cbar");
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, not(containsString("_format")));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, not(containsString("_format")));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, not(containsString("_format")));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.JSON);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.JSON);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, not(containsString("_format")));
 
@@ -302,28 +332,28 @@ public class SearchR4Test {
 		// Initial search
 		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient?identifier=foo%7Cbar");
 		httpGet.addHeader(Constants.HEADER_ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8");
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.XML);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.XML);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, not(containsString("_format")));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
 		httpGet.addHeader(Constants.HEADER_ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8");
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.XML);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.XML);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, not(containsString("_format")));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
 		httpGet.addHeader(Constants.HEADER_ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8");
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.XML);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.XML);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, not(containsString("_format")));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
 		httpGet.addHeader(Constants.HEADER_ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8");
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.XML);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.XML);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, not(containsString("_format")));
 
@@ -337,25 +367,25 @@ public class SearchR4Test {
 
 		// Initial search
 		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient?identifier=foo%7Cbar&_format=xml");
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.XML);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.XML);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=xml"));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.XML);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.XML);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=xml"));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.XML);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.XML);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=xml"));
 
 		// Fetch the next page
 		httpGet = new HttpGet(linkNext);
-		bundle = executeAndReturnLinkNext(httpGet, EncodingEnum.XML);
+		bundle = executeSearchAndValidateHasLinkNext(httpGet, EncodingEnum.XML);
 		linkNext = bundle.getLink(Constants.LINK_NEXT).getUrl();
 		assertThat(linkNext, containsString("_format=xml"));
 
@@ -528,13 +558,13 @@ public class SearchR4Test {
 
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void afterClassClearContext() throws Exception {
 		JettyUtil.closeServer(ourServer);
 		TestUtil.clearAllStaticFieldsForUnitTest();
 	}
 
-	@BeforeClass
+	@BeforeAll
 	public static void beforeClass() throws Exception {
 		ourServer = new Server(0);
 

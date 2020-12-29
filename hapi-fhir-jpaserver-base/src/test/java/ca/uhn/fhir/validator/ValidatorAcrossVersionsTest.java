@@ -1,10 +1,11 @@
 package ca.uhn.fhir.validator;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-import org.hl7.fhir.instance.hapi.validation.FhirInstanceValidator;
-import org.junit.AfterClass;
-import org.junit.Test;
+import ca.uhn.fhir.context.FhirVersionEnum;
+import org.hl7.fhir.common.hapi.validation.validator.FhirInstanceValidator;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
 
 import ca.uhn.fhir.context.ConfigurationException;
 import ca.uhn.fhir.context.FhirContext;
@@ -20,14 +21,9 @@ import ca.uhn.fhir.validation.ValidationResult;
 public class ValidatorAcrossVersionsTest {
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(ValidatorAcrossVersionsTest.class);
 
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
-	}
-
 	@Test
 	public void testWrongContextVersion() {
-		FhirContext ctxDstu2 = FhirContext.forDstu2();
+		FhirContext ctxDstu2 = FhirContext.forCached(FhirVersionEnum.DSTU2);
 		try {
 			ctxDstu2.getResourceDefinition(org.hl7.fhir.dstu3.model.Patient.class);
 			fail();
@@ -41,11 +37,11 @@ public class ValidatorAcrossVersionsTest {
 	@Test
 	public void testValidateProfileOnDstu2Resource() {
 
-		FhirContext ctxDstu2 = FhirContext.forDstu2();
+		FhirContext ctxDstu2 = FhirContext.forCached(FhirVersionEnum.DSTU2);
 		FhirValidator val = ctxDstu2.newValidator();
 		val.setValidateAgainstStandardSchema(false);
 		val.setValidateAgainstStandardSchematron(false);
-		val.registerValidatorModule(new FhirInstanceValidator());
+		val.registerValidatorModule(new FhirInstanceValidator(ctxDstu2));
 
 		QuestionnaireResponse resp = new QuestionnaireResponse();
 		resp.setAuthored(DateTimeDt.withCurrentTime());
@@ -54,8 +50,8 @@ public class ValidatorAcrossVersionsTest {
 		ourLog.info(ctxDstu2.newJsonParser().setPrettyPrint(true).encodeResourceToString(result.toOperationOutcome()));
 
 		assertEquals(2, result.getMessages().size());
-		assertEquals("No questionnaire is identified, so no validation can be performed against the base questionnaire", result.getMessages().get(0).getMessage());
-		assertEquals("Profile http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse, Element 'QuestionnaireResponse.status': minimum required = 1, but only found 0", result.getMessages().get(1).getMessage());
+		assertEquals("QuestionnaireResponse.status: minimum required = 1, but only found 0 (from http://hl7.org/fhir/StructureDefinition/QuestionnaireResponse)", result.getMessages().get(0).getMessage());
+		assertEquals("No questionnaire is identified, so no validation can be performed against the base questionnaire", result.getMessages().get(1).getMessage());
 	}
 
 }

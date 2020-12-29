@@ -9,10 +9,15 @@ import ca.uhn.fhir.rest.api.MethodOutcome;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
 import org.eclipse.jetty.websocket.client.WebSocketClient;
-import org.hl7.fhir.r4.model.*;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.hl7.fhir.r4.model.CodeableConcept;
+import org.hl7.fhir.r4.model.Coding;
+import org.hl7.fhir.r4.model.Observation;
+import org.hl7.fhir.r4.model.Patient;
+import org.hl7.fhir.r4.model.Reference;
+import org.hl7.fhir.r4.model.Subscription;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -20,8 +25,9 @@ import java.net.URI;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import static org.awaitility.Awaitility.await;
 import static org.hamcrest.Matchers.contains;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 /**
  * Adds a FHIR subscription with criteria through the rest interface. Then creates a websocket with the id of the
@@ -53,20 +59,20 @@ public class WebsocketWithSubscriptionIdR4Test extends BaseResourceProviderR4Tes
 	private SubscriptionTestUtil mySubscriptionTestUtil;
 
 	@Override
-	@After
+	@AfterEach
 	public void after() throws Exception {
 		super.after();
 		mySubscriptionTestUtil.unregisterSubscriptionInterceptor();
 	}
 
-	@After
+	@AfterEach
 	public void afterCloseWebsocket() throws Exception {
 		ourLog.info("Shutting down websocket client");
 		myWebSocketClient.stop();
 	}
 
 	@Override
-	@Before
+	@BeforeEach
 	public void before() throws Exception {
 		super.before();
 
@@ -77,7 +83,7 @@ public class WebsocketWithSubscriptionIdR4Test extends BaseResourceProviderR4Tes
 		 */
 
 		Patient patient = FhirR4Util.getPatient();
-		MethodOutcome methodOutcome = ourClient.create().resource(patient).execute();
+		MethodOutcome methodOutcome = myClient.create().resource(patient).execute();
 		myPatientId = methodOutcome.getId().getIdPart();
 
 		/*
@@ -94,7 +100,7 @@ public class WebsocketWithSubscriptionIdR4Test extends BaseResourceProviderR4Tes
 		channel.setPayload("application/json");
 		subscription.setChannel(channel);
 
-		methodOutcome = ourClient.create().resource(subscription).execute();
+		methodOutcome = myClient.create().resource(subscription).execute();
 		mySubscriptionId = methodOutcome.getId().getIdPart();
 
 		/*
@@ -109,13 +115,15 @@ public class WebsocketWithSubscriptionIdR4Test extends BaseResourceProviderR4Tes
 		ClientUpgradeRequest request = new ClientUpgradeRequest();
 		ourLog.info("Connecting to : {}", echoUri);
 		Future<Session> connection = myWebSocketClient.connect(mySocketImplementation, echoUri, request);
-		Session session = connection.get(2, TimeUnit.SECONDS);
+		Session session = connection.get(10, TimeUnit.SECONDS);
 
 		ourLog.info("Connected to WS: {}", session.isOpen());
+
+		await().until(() -> mySubscriptionRegistry.size() == 1);
 	}
 
 	@Test
-	public void createObservation() throws Exception {
+	public void createObservation() {
 		Observation observation = new Observation();
 		CodeableConcept codeableConcept = new CodeableConcept();
 		observation.setCode(codeableConcept);
@@ -127,7 +135,7 @@ public class WebsocketWithSubscriptionIdR4Test extends BaseResourceProviderR4Tes
 		observation.setSubject(reference);
 		observation.setStatus(Observation.ObservationStatus.FINAL);
 
-		MethodOutcome methodOutcome2 = ourClient.create().resource(observation).execute();
+		MethodOutcome methodOutcome2 = myClient.create().resource(observation).execute();
 		String observationId = methodOutcome2.getId().getIdPart();
 		observation.setId(observationId);
 
@@ -139,7 +147,7 @@ public class WebsocketWithSubscriptionIdR4Test extends BaseResourceProviderR4Tes
 	}
 
 	@Test
-	public void createObservationThatDoesNotMatch() throws Exception {
+	public void createObservationThatDoesNotMatch() {
 		Observation observation = new Observation();
 		CodeableConcept codeableConcept = new CodeableConcept();
 		observation.setCode(codeableConcept);
@@ -151,7 +159,7 @@ public class WebsocketWithSubscriptionIdR4Test extends BaseResourceProviderR4Tes
 		observation.setSubject(reference);
 		observation.setStatus(Observation.ObservationStatus.FINAL);
 
-		MethodOutcome methodOutcome2 = ourClient.create().resource(observation).execute();
+		MethodOutcome methodOutcome2 = myClient.create().resource(observation).execute();
 		String observationId = methodOutcome2.getId().getIdPart();
 		observation.setId(observationId);
 

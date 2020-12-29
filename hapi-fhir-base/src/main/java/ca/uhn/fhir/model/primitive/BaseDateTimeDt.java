@@ -4,7 +4,7 @@ package ca.uhn.fhir.model.primitive;
  * #%L
  * HAPI FHIR - Core Library
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,8 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.GregorianCalendar;
 import java.util.TimeZone;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
@@ -39,10 +41,13 @@ public abstract class BaseDateTimeDt extends BasePrimitive<Date> {
 	static final long NANOS_PER_MILLIS = 1000000L;
 	static final long NANOS_PER_SECOND = 1000000000L;
 
+	private static final Map<String, TimeZone> timezoneCache = new ConcurrentHashMap<>();
+
 	private static final FastDateFormat ourHumanDateFormat = FastDateFormat.getDateInstance(FastDateFormat.MEDIUM);
 	private static final FastDateFormat ourHumanDateTimeFormat = FastDateFormat.getDateTimeInstance(FastDateFormat.MEDIUM, FastDateFormat.MEDIUM);
 	private static final FastDateFormat ourXmlDateTimeFormat = FastDateFormat.getInstance("yyyy-MM-dd'T'HH:mm:ss");
 	public static final String NOW_DATE_CONSTANT = "%now";
+	public static final String TODAY_DATE_CONSTANT = "%today";
 	private String myFractionalSeconds;
 	private TemporalPrecisionEnum myPrecision = null;
 	private TimeZone myTimeZone;
@@ -99,7 +104,7 @@ public abstract class BaseDateTimeDt extends BasePrimitive<Date> {
 		}
 		GregorianCalendar cal;
 		if (myTimeZoneZulu) {
-			cal = new GregorianCalendar(TimeZone.getTimeZone("GMT"));
+			cal = new GregorianCalendar(getTimeZone("GMT"));
 		} else if (myTimeZone != null) {
 			cal = new GregorianCalendar(myTimeZone);
 		} else {
@@ -263,7 +268,7 @@ public abstract class BaseDateTimeDt extends BasePrimitive<Date> {
 	 */
 	public TimeZone getTimeZone() {
 		if (myTimeZoneZulu) {
-			return TimeZone.getTimeZone("GMT");
+			return getTimeZone("GMT");
 		}
 		return myTimeZone;
 	}
@@ -574,10 +579,14 @@ public abstract class BaseDateTimeDt extends BasePrimitive<Date> {
 			parseInt(theWholeValue, theValue.substring(1, 3), 0, 23);
 			parseInt(theWholeValue, theValue.substring(4, 6), 0, 59);
 			clearTimeZone();
-			setTimeZone(TimeZone.getTimeZone("GMT" + theValue));
+			setTimeZone(getTimeZone("GMT" + theValue));
 		}
 
 		return this;
+	}
+
+	private TimeZone getTimeZone(String offset) {
+		return timezoneCache.computeIfAbsent(offset, TimeZone::getTimeZone);
 	}
 
 	public BaseDateTimeDt setTimeZone(TimeZone theTimeZone) {
@@ -638,6 +647,9 @@ public abstract class BaseDateTimeDt extends BasePrimitive<Date> {
 
 		if (NOW_DATE_CONSTANT.equalsIgnoreCase(theValue)) {
 			super.setValueAsString(ourXmlDateTimeFormat.format(new Date()));
+		} else if (TODAY_DATE_CONSTANT.equalsIgnoreCase(theValue)) {
+			super.setValueAsString(ourXmlDateTimeFormat.format(new Date()));
+			setPrecision(TemporalPrecisionEnum.DAY);
 		} else {
 			super.setValueAsString(theValue);
 		}

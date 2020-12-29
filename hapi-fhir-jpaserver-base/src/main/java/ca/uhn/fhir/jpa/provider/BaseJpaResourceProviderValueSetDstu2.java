@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.provider;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,22 +20,28 @@ package ca.uhn.fhir.jpa.provider;
  * #L%
  */
 
-import ca.uhn.fhir.context.support.IContextValidationSupport;
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoCodeSystem;
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoValueSet;
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoValueSet.ValidateCodeResult;
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.support.IValidationSupport;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoCodeSystem;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoValueSet;
 import ca.uhn.fhir.jpa.model.util.JpaConstants;
 import ca.uhn.fhir.model.dstu2.composite.CodeableConceptDt;
 import ca.uhn.fhir.model.dstu2.composite.CodingDt;
 import ca.uhn.fhir.model.dstu2.resource.Parameters;
 import ca.uhn.fhir.model.dstu2.resource.ValueSet;
-import ca.uhn.fhir.model.primitive.*;
+import ca.uhn.fhir.model.primitive.BooleanDt;
+import ca.uhn.fhir.model.primitive.CodeDt;
+import ca.uhn.fhir.model.primitive.IdDt;
+import ca.uhn.fhir.model.primitive.StringDt;
+import ca.uhn.fhir.model.primitive.UriDt;
 import ca.uhn.fhir.rest.annotation.IdParam;
 import ca.uhn.fhir.rest.annotation.Operation;
 import ca.uhn.fhir.rest.annotation.OperationParam;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
+import ca.uhn.fhir.util.ParametersUtil;
+import org.hl7.fhir.instance.model.api.IBaseParameters;
 
 import javax.servlet.http.HttpServletRequest;
 
@@ -102,7 +108,7 @@ public class BaseJpaResourceProviderValueSetDstu2 extends JpaResourceProviderDst
 		startRequest(theServletRequest);
 		try {
 			IFhirResourceDaoCodeSystem<ValueSet, CodingDt, CodeableConceptDt> dao = (IFhirResourceDaoCodeSystem<ValueSet, CodingDt, CodeableConceptDt>) getDao();
-			IContextValidationSupport.LookupCodeResult result = dao.lookupCode(theCode, theSystem, theCoding, theRequestDetails);
+			IValidationSupport.LookupCodeResult result = dao.lookupCode(theCode, theSystem, theCoding, theRequestDetails);
 			if (result.isFound() == false) {
 				throw new ResourceNotFoundException("Unable to find code[" + result.getSearchedForCode() + "] in system[" + result.getSearchedForSystem() + "]");
 			}
@@ -139,19 +145,25 @@ public class BaseJpaResourceProviderValueSetDstu2 extends JpaResourceProviderDst
 		startRequest(theServletRequest);
 		try {
 			IFhirResourceDaoValueSet<ValueSet, CodingDt, CodeableConceptDt> dao = (IFhirResourceDaoValueSet<ValueSet, CodingDt, CodeableConceptDt>) getDao();
-			ValidateCodeResult result = dao.validateCode(theValueSetIdentifier, theId, theCode, theSystem, theDisplay, theCoding, theCodeableConcept, theRequestDetails);
-			Parameters retVal = new Parameters();
-			retVal.addParameter().setName("result").setValue(new BooleanDt(result.isResult()));
-			if (isNotBlank(result.getMessage())) {
-				retVal.addParameter().setName("message").setValue(new StringDt(result.getMessage()));
-			}
-			if (isNotBlank(result.getDisplay())) {
-				retVal.addParameter().setName("display").setValue(new StringDt(result.getDisplay()));
-			}
-			return retVal;
+			IValidationSupport.CodeValidationResult result = dao.validateCode(theValueSetIdentifier, theId, theCode, theSystem, theDisplay, theCoding, theCodeableConcept, theRequestDetails);
+			return (Parameters) toValidateCodeResult(getContext(), result);
 		} finally {
 			endRequest(theServletRequest);
 		}
+	}
+
+	public static IBaseParameters toValidateCodeResult(FhirContext theContext, IValidationSupport.CodeValidationResult theResult) {
+		IBaseParameters retVal = ParametersUtil.newInstance(theContext);
+
+		ParametersUtil.addParameterToParametersBoolean(theContext, retVal, "result", theResult.isOk());
+		if (isNotBlank(theResult.getMessage())) {
+			ParametersUtil.addParameterToParametersString(theContext, retVal, "message", theResult.getMessage());
+		}
+		if (isNotBlank(theResult.getDisplay())) {
+			ParametersUtil.addParameterToParametersString(theContext, retVal, "display", theResult.getDisplay());
+		}
+
+		return retVal;
 	}
 
 	private static boolean moreThanOneTrue(boolean... theBooleans) {

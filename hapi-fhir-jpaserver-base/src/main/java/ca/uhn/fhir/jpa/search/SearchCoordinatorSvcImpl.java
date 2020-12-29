@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.search;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,18 +24,29 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.interceptor.api.HookParams;
 import ca.uhn.fhir.interceptor.api.IInterceptorBroadcaster;
 import ca.uhn.fhir.interceptor.api.Pointcut;
-import ca.uhn.fhir.jpa.dao.*;
+import ca.uhn.fhir.interceptor.model.RequestPartitionId;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
+import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
+import ca.uhn.fhir.jpa.api.dao.IDao;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDao;
+import ca.uhn.fhir.jpa.api.svc.ISearchCoordinatorSvc;
+import ca.uhn.fhir.jpa.dao.IResultIterator;
+import ca.uhn.fhir.jpa.dao.ISearchBuilder;
+import ca.uhn.fhir.jpa.dao.SearchBuilderFactory;
 import ca.uhn.fhir.jpa.entity.Search;
 import ca.uhn.fhir.jpa.entity.SearchInclude;
 import ca.uhn.fhir.jpa.entity.SearchTypeEnum;
 import ca.uhn.fhir.jpa.interceptor.JpaPreResourceAccessDetails;
 import ca.uhn.fhir.jpa.model.search.SearchRuntimeDetails;
 import ca.uhn.fhir.jpa.model.search.SearchStatusEnum;
+import ca.uhn.fhir.jpa.partition.IRequestPartitionHelperSvc;
 import ca.uhn.fhir.jpa.search.cache.ISearchCacheSvc;
 import ca.uhn.fhir.jpa.search.cache.ISearchResultCacheSvc;
+import ca.uhn.fhir.jpa.search.cache.SearchCacheStatusEnum;
 import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
 import ca.uhn.fhir.jpa.util.InterceptorUtil;
 import ca.uhn.fhir.jpa.util.JpaInterceptorBroadcaster;
+import ca.uhn.fhir.model.api.IQueryParameterType;
 import ca.uhn.fhir.model.api.Include;
 import ca.uhn.fhir.rest.api.CacheControlDirective;
 import ca.uhn.fhir.rest.api.Constants;
@@ -44,6 +55,7 @@ import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
 import ca.uhn.fhir.rest.api.server.IPreResourceAccessDetails;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.api.server.storage.ResourcePersistentId;
 import ca.uhn.fhir.rest.server.IPagingProvider;
 import ca.uhn.fhir.rest.server.SimpleBundleProvider;
 import ca.uhn.fhir.rest.server.exceptions.BaseServerResponseException;
@@ -55,6 +67,9 @@ import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
 import ca.uhn.fhir.rest.server.util.ICachedSearchDetails;
 import ca.uhn.fhir.util.AsyncUtil;
 import ca.uhn.fhir.util.StopWatch;
+import co.elastic.apm.api.ElasticApm;
+import co.elastic.apm.api.Span;
+import co.elastic.apm.api.Transaction;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -67,7 +82,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.orm.jpa.JpaDialect;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.orm.jpa.vendor.HibernateJpaDialect;
-import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -75,6 +90,7 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionCallbackWithoutResult;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.annotation.Nonnull;
@@ -85,15 +101,27 @@ import javax.validation.constraints.NotNull;
 import java.io.IOException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import static org.apache.commons.lang3.ObjectUtils.defaultIfNull;
 
 @Component("mySearchCoordinatorSvc")
 public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 	public static final int DEFAULT_SYNC_SIZE = 250;
-
+	public static final String UNIT_TEST_CAPTURE_STACK = "unit_test_capture_stack";
+	public static final Integer INTEGER_0 = 0;
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(SearchCoordinatorSvcImpl.class);
 	private final ConcurrentHashMap<String, SearchTask> myIdToSearchTask = new ConcurrentHashMap<>();
 	@Autowired
@@ -102,7 +130,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 	private DaoConfig myDaoConfig;
 	@Autowired
 	private EntityManager myEntityManager;
-	private ExecutorService myExecutor;
+	private final ExecutorService myExecutor;
 	private Integer myLoadingThrottleForUnitTests = null;
 	private long myMaxMillisToWaitForRemoteResults = DateUtils.MILLIS_PER_MINUTE;
 	private boolean myNeverUseLocalSearchForUnitTests;
@@ -118,19 +146,25 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 	private DaoRegistry myDaoRegistry;
 	@Autowired
 	private IPagingProvider myPagingProvider;
+	@Autowired
+	private SearchBuilderFactory mySearchBuilderFactory;
 
 	private int mySyncSize = DEFAULT_SYNC_SIZE;
 	/**
 	 * Set in {@link #start()}
 	 */
 	private boolean myCustomIsolationSupported;
+	@Autowired
+	private PersistedJpaBundleProviderFactory myPersistedJpaBundleProviderFactory;
+	@Autowired
+	private IRequestPartitionHelperSvc myRequestPartitionHelperService;
 
 	/**
 	 * Constructor
 	 */
-	public SearchCoordinatorSvcImpl() {
-		CustomizableThreadFactory threadFactory = new CustomizableThreadFactory("search_coord_");
-		myExecutor = Executors.newCachedThreadPool(threadFactory);
+	@Autowired
+	public SearchCoordinatorSvcImpl(ThreadPoolTaskExecutor searchCoordinatorThreadFactory) {
+		myExecutor = searchCoordinatorThreadFactory.getThreadPoolExecutor();
 	}
 
 	@VisibleForTesting
@@ -155,6 +189,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 	@Override
 	public void cancelAllActiveSearches() {
 		for (SearchTask next : myIdToSearchTask.values()) {
+			ourLog.info("Requesting immediate abort of search: {}", next.getSearch().getUuid());
 			next.requestImmediateAbort();
 			AsyncUtil.awaitLatchAndIgnoreInterrupt(next.getCompletionLatch(), 30, TimeUnit.SECONDS);
 		}
@@ -172,7 +207,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 	 */
 	@Override
 	@Transactional(propagation = Propagation.NEVER)
-	public List<Long> getResources(final String theUuid, int theFrom, int theTo, @Nullable RequestDetails theRequestDetails) {
+	public List<ResourcePersistentId> getResources(final String theUuid, int theFrom, int theTo, @Nullable RequestDetails theRequestDetails) {
 		TransactionTemplate txTemplate = new TransactionTemplate(myManagedTxManager);
 		txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
 
@@ -192,7 +227,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			if (myNeverUseLocalSearchForUnitTests == false) {
 				if (searchTask != null) {
 					ourLog.trace("Local search found");
-					List<Long> resourcePids = searchTask.getResourcePids(theFrom, theTo);
+					List<ResourcePersistentId> resourcePids = searchTask.getResourcePids(theFrom, theTo);
 					ourLog.trace("Local search returned {} pids, wanted {}-{} - Search: {}", resourcePids.size(), theFrom, theTo, searchTask.getSearch());
 
 					/*
@@ -232,11 +267,13 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 				ourLog.trace("Going to try to start next search");
 				Optional<Search> newSearch = mySearchCacheSvc.tryToMarkSearchAsInProgress(search);
 				if (newSearch.isPresent()) {
+					ourLog.trace("Launching new search");
 					search = newSearch.get();
 					String resourceType = search.getResourceType();
 					SearchParameterMap params = search.getSearchParameterMap().orElseThrow(() -> new IllegalStateException("No map in PASSCOMPLET search"));
 					IFhirResourceDao<?> resourceDao = myDaoRegistry.getResourceDao(resourceType);
-					SearchContinuationTask task = new SearchContinuationTask(search, resourceDao, params, resourceType, theRequestDetails);
+					RequestPartitionId requestPartitionId = myRequestPartitionHelperService.determineReadPartitionForRequest(theRequestDetails, resourceType);
+					SearchContinuationTask task = new SearchContinuationTask(search, resourceDao, params, resourceType, theRequestDetails, requestPartitionId);
 					myIdToSearchTask.put(search.getUuid(), task);
 					myExecutor.submit(task);
 				}
@@ -247,7 +284,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 
 		ourLog.trace("Finished looping");
 
-		List<Long> pids = mySearchResultCacheSvc.fetchResultPids(search, theFrom, theTo);
+		List<ResourcePersistentId> pids = mySearchResultCacheSvc.fetchResultPids(search, theFrom, theTo);
 		if (pids == null) {
 			throw newResourceGoneException(theUuid);
 		}
@@ -264,54 +301,48 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 		return new ResourceGoneException(msg);
 	}
 
-
-	private void populateBundleProvider(PersistedJpaBundleProvider theRetVal) {
-		theRetVal.setContext(myContext);
-		theRetVal.setEntityManager(myEntityManager);
-		theRetVal.setPlatformTransactionManager(myManagedTxManager);
-		theRetVal.setSearchCacheSvc(mySearchCacheSvc);
-		theRetVal.setSearchCoordinatorSvc(this);
-		theRetVal.setInterceptorBroadcaster(myInterceptorBroadcaster);
-	}
-
 	@Override
-	public IBundleProvider registerSearch(final IDao theCallingDao, final SearchParameterMap theParams, String theResourceType, CacheControlDirective theCacheControlDirective, RequestDetails theRequestDetails) {
+	public IBundleProvider registerSearch(final IFhirResourceDao<?> theCallingDao, final SearchParameterMap theParams, String theResourceType, CacheControlDirective theCacheControlDirective, RequestDetails theRequestDetails, RequestPartitionId theRequestPartitionId) {
 		final String searchUuid = UUID.randomUUID().toString();
 
 		ourLog.debug("Registering new search {}", searchUuid);
 
 		Class<? extends IBaseResource> resourceTypeClass = myContext.getResourceDefinition(theResourceType).getImplementingClass();
-		final ISearchBuilder sb = theCallingDao.newSearchBuilder();
-		sb.setType(resourceTypeClass, theResourceType);
+		final ISearchBuilder sb = mySearchBuilderFactory.newSearchBuilder(theCallingDao, theResourceType, resourceTypeClass);
 		sb.setFetchSize(mySyncSize);
 
 		final Integer loadSynchronousUpTo = getLoadSynchronousUpToOrNull(theCacheControlDirective);
 
 		if (theParams.isLoadSynchronous() || loadSynchronousUpTo != null) {
 			ourLog.debug("Search {} is loading in synchronous mode", searchUuid);
-			return executeQuery(theParams, theRequestDetails, searchUuid, sb, loadSynchronousUpTo);
+			return executeQuery(theResourceType, theParams, theRequestDetails, searchUuid, sb, loadSynchronousUpTo, theRequestPartitionId);
 		}
 
 		/*
 		 * See if there are any cached searches whose results we can return
 		 * instead
 		 */
-		boolean useCache = true;
+		SearchCacheStatusEnum cacheStatus = SearchCacheStatusEnum.MISS;
 		if (theCacheControlDirective != null && theCacheControlDirective.isNoCache() == true) {
-			useCache = false;
+			cacheStatus = SearchCacheStatusEnum.NOT_TRIED;
 		}
 
 		final String queryString = theParams.toNormalizedQueryString(myContext);
-		if (theParams.getEverythingMode() == null) {
-			if (myDaoConfig.getReuseCachedSearchResultsForMillis() != null && useCache) {
-				IBundleProvider foundSearchProvider = findCachedQuery(theCallingDao, theParams, theResourceType, theRequestDetails, queryString);
-				if (foundSearchProvider != null) {
-					return foundSearchProvider;
+		if (cacheStatus != SearchCacheStatusEnum.NOT_TRIED) {
+			if (theParams.getEverythingMode() == null) {
+				if (myDaoConfig.getReuseCachedSearchResultsForMillis() != null) {
+					PersistedJpaBundleProvider foundSearchProvider = findCachedQuery(theParams, theResourceType, theRequestDetails, queryString, theRequestPartitionId);
+					if (foundSearchProvider != null) {
+						foundSearchProvider.setCacheStatus(SearchCacheStatusEnum.HIT);
+						return foundSearchProvider;
+					}
 				}
 			}
 		}
 
-		return submitSearch(theCallingDao, theParams, theResourceType, theRequestDetails, searchUuid, sb, queryString);
+		PersistedJpaSearchFirstPageBundleProvider retVal = submitSearch(theCallingDao, theParams, theResourceType, theRequestDetails, searchUuid, sb, queryString, theRequestPartitionId);
+		retVal.setCacheStatus(cacheStatus);
+		return retVal;
 
 	}
 
@@ -348,10 +379,10 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 	}
 
 	@NotNull
-	private IBundleProvider submitSearch(IDao theCallingDao, SearchParameterMap theParams, String theResourceType, RequestDetails theRequestDetails, String theSearchUuid, ISearchBuilder theSb, String theQueryString) {
+	private PersistedJpaSearchFirstPageBundleProvider submitSearch(IDao theCallingDao, SearchParameterMap theParams, String theResourceType, RequestDetails theRequestDetails, String theSearchUuid, ISearchBuilder theSb, String theQueryString, RequestPartitionId theRequestPartitionId) {
 		StopWatch w = new StopWatch();
 		Search search = new Search();
-		populateSearchEntity(theParams, theResourceType, theSearchUuid, theQueryString, search);
+		populateSearchEntity(theParams, theResourceType, theSearchUuid, theQueryString, search, theRequestPartitionId);
 
 		// Interceptor call: STORAGE_PRESEARCH_REGISTERED
 		HookParams params = new HookParams()
@@ -360,21 +391,22 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			.addIfMatchesType(ServletRequestDetails.class, theRequestDetails);
 		JpaInterceptorBroadcaster.doCallHooks(myInterceptorBroadcaster, theRequestDetails, Pointcut.STORAGE_PRESEARCH_REGISTERED, params);
 
-		SearchTask task = new SearchTask(search, theCallingDao, theParams, theResourceType, theRequestDetails);
+		SearchTask task = new SearchTask(search, theCallingDao, theParams, theResourceType, theRequestDetails, theRequestPartitionId);
 		myIdToSearchTask.put(search.getUuid(), task);
 		myExecutor.submit(task);
 
-		PersistedJpaSearchFirstPageBundleProvider retVal = new PersistedJpaSearchFirstPageBundleProvider(search, theCallingDao, task, theSb, myManagedTxManager, theRequestDetails);
-		populateBundleProvider(retVal);
+		PersistedJpaSearchFirstPageBundleProvider retVal = myPersistedJpaBundleProviderFactory.newInstanceFirstPage(theRequestDetails, search, task, theSb);
 
 		ourLog.debug("Search initial phase completed in {}ms", w.getMillis());
 		return retVal;
 	}
 
-	@org.jetbrains.annotations.Nullable
-	private IBundleProvider findCachedQuery(IDao theCallingDao, SearchParameterMap theParams, String theResourceType, RequestDetails theRequestDetails, String theQueryString) {
+	@Nullable
+	private PersistedJpaBundleProvider findCachedQuery(SearchParameterMap theParams, String theResourceType, RequestDetails theRequestDetails, String theQueryString, RequestPartitionId theRequestPartitionId) {
 		TransactionTemplate txTemplate = new TransactionTemplate(myManagedTxManager);
-		PersistedJpaBundleProvider foundSearchProvider = txTemplate.execute(t -> {
+
+		// May be null
+		return txTemplate.execute(t -> {
 
 			// Interceptor call: STORAGE_PRECHECK_FOR_CACHED_SEARCH
 			HookParams params = new HookParams()
@@ -387,7 +419,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			}
 
 			// Check for a search matching the given hash
-			Search searchToUse = findSearchToUseOrNull(theQueryString, theResourceType);
+			Search searchToUse = findSearchToUseOrNull(theQueryString, theResourceType, theRequestPartitionId);
 			if (searchToUse == null) {
 				return null;
 			}
@@ -400,43 +432,25 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 				.addIfMatchesType(ServletRequestDetails.class, theRequestDetails);
 			JpaInterceptorBroadcaster.doCallHooks(myInterceptorBroadcaster, theRequestDetails, Pointcut.JPA_PERFTRACE_SEARCH_REUSING_CACHED, params);
 
-			mySearchCacheSvc.updateSearchLastReturned(searchToUse, new Date());
-
-			PersistedJpaBundleProvider retVal = new PersistedJpaBundleProvider(theRequestDetails, searchToUse.getUuid(), theCallingDao);
-			retVal.setCacheHit(true);
-			populateBundleProvider(retVal);
-
-			return retVal;
+			return myPersistedJpaBundleProviderFactory.newInstance(theRequestDetails, searchToUse.getUuid());
 		});
-
-		if (foundSearchProvider != null) {
-			return foundSearchProvider;
-		}
-		return null;
 	}
 
 	@Nullable
-	private Search findSearchToUseOrNull(String theQueryString, String theResourceType) {
-		Search searchToUse = null;
-
+	private Search findSearchToUseOrNull(String theQueryString, String theResourceType, RequestPartitionId theRequestPartitionId) {
 		// createdCutoff is in recent past
 		final Instant createdCutoff = Instant.now().minus(myDaoConfig.getReuseCachedSearchResultsForMillis(), ChronoUnit.MILLIS);
-		Collection<Search> candidates = mySearchCacheSvc.findCandidatesForReuse(theResourceType, theQueryString, theQueryString.hashCode(), Date.from(createdCutoff));
 
-		for (Search nextCandidateSearch : candidates) {
-			// We should only reuse our search if it was created within the permitted window
-			// Date.after() is unreliable.  Instant.isAfter() always works.
-			if (theQueryString.equals(nextCandidateSearch.getSearchQueryString()) && nextCandidateSearch.getCreated().toInstant().isAfter(createdCutoff)) {
-				searchToUse = nextCandidateSearch;
-				break;
-			}
-		}
-		return searchToUse;
+		Optional<Search> candidate = mySearchCacheSvc.findCandidatesForReuse(theResourceType, theQueryString, createdCutoff, theRequestPartitionId);
+		return candidate.orElse(null);
 	}
 
-	private IBundleProvider executeQuery(SearchParameterMap theParams, RequestDetails theRequestDetails, String theSearchUuid, ISearchBuilder theSb, Integer theLoadSynchronousUpTo) {
+	private IBundleProvider executeQuery(String theResourceType, SearchParameterMap theParams, RequestDetails theRequestDetails, String theSearchUuid, ISearchBuilder theSb, Integer theLoadSynchronousUpTo, RequestPartitionId theRequestPartitionId) {
 		SearchRuntimeDetails searchRuntimeDetails = new SearchRuntimeDetails(theRequestDetails, theSearchUuid);
 		searchRuntimeDetails.setLoadSynchronous(true);
+
+		boolean wantOnlyCount = isWantOnlyCount(theParams);
+		boolean wantCount = isWantCount(theParams, wantOnlyCount);
 
 		// Execute the query and make sure we return distinct results
 		TransactionTemplate txTemplate = new TransactionTemplate(myManagedTxManager);
@@ -444,9 +458,33 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 		return txTemplate.execute(t -> {
 
 			// Load the results synchronously
-			final List<Long> pids = new ArrayList<>();
+			final List<ResourcePersistentId> pids = new ArrayList<>();
 
-			try (IResultIterator resultIter = theSb.createQuery(theParams, searchRuntimeDetails, theRequestDetails)) {
+			Long count = 0L;
+			if (wantCount) {
+				ourLog.trace("Performing count");
+				// TODO FulltextSearchSvcImpl will remove necessary parameters from the "theParams", this will cause actual query after count to
+				//  return wrong response. This is some dirty fix to avoid that issue. Params should not be mutated?
+				//  Maybe instead of removing them we could skip them in db query builder if full text search was used?
+				List<List<IQueryParameterType>> contentAndTerms = theParams.get(Constants.PARAM_CONTENT);
+				List<List<IQueryParameterType>> textAndTerms = theParams.get(Constants.PARAM_TEXT);
+
+				Iterator<Long> countIterator = theSb.createCountQuery(theParams, theSearchUuid, theRequestDetails, theRequestPartitionId);
+
+				if (contentAndTerms != null) theParams.put(Constants.PARAM_CONTENT, contentAndTerms);
+				if (textAndTerms != null) theParams.put(Constants.PARAM_TEXT, textAndTerms);
+
+				count = countIterator.next();
+				ourLog.trace("Got count {}", count);
+			}
+
+			if (wantOnlyCount) {
+				SimpleBundleProvider bundleProvider = new SimpleBundleProvider();
+				bundleProvider.setSize(count.intValue());
+				return bundleProvider;
+			}
+
+			try (IResultIterator resultIter = theSb.createQuery(theParams, searchRuntimeDetails, theRequestDetails, theRequestPartitionId)) {
 				while (resultIter.hasNext()) {
 					pids.add(resultIter.next());
 					if (theLoadSynchronousUpTo != null && pids.size() >= theLoadSynchronousUpTo) {
@@ -477,25 +515,65 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			/*
 			 * For synchronous queries, we load all the includes right away
 			 * since we're returning a static bundle with all the results
-			 * pre-loaded. This is ok because syncronous requests are not
+			 * pre-loaded. This is ok because synchronous requests are not
 			 * expected to be paged
 			 *
 			 * On the other hand for async queries we load includes/revincludes
 			 * individually for pages as we return them to clients
 			 */
-			final Set<Long> includedPids = new HashSet<>();
+			final Set<ResourcePersistentId> includedPids = new HashSet<>();
+			if (theParams.getEverythingMode() == null) {
+				includedPids.addAll(theSb.loadIncludes(myContext, myEntityManager, pids, theParams.getIncludes(), false, theParams.getLastUpdated(), "(synchronous)", theRequestDetails));
+			}
 			includedPids.addAll(theSb.loadIncludes(myContext, myEntityManager, pids, theParams.getRevIncludes(), true, theParams.getLastUpdated(), "(synchronous)", theRequestDetails));
-			includedPids.addAll(theSb.loadIncludes(myContext, myEntityManager, pids, theParams.getIncludes(), false, theParams.getLastUpdated(), "(synchronous)", theRequestDetails));
-			List<Long> includedPidsList = new ArrayList<>(includedPids);
+
+			List<ResourcePersistentId> includedPidsList = new ArrayList<>(includedPids);
 
 			List<IBaseResource> resources = new ArrayList<>();
 			theSb.loadResourcesByPid(pids, includedPidsList, resources, false, theRequestDetails);
 
 			// Hook: STORAGE_PRESHOW_RESOURCES
-			InterceptorUtil.fireStoragePreshowResource(resources, theRequestDetails, myInterceptorBroadcaster);
+			resources = InterceptorUtil.fireStoragePreshowResource(resources, theRequestDetails, myInterceptorBroadcaster);
 
-			return new SimpleBundleProvider(resources);
+			SimpleBundleProvider bundleProvider = new SimpleBundleProvider(resources);
+
+			if (wantCount) {
+				bundleProvider.setSize(count.intValue());
+			} else {
+				Integer queryCount = getQueryCount(theLoadSynchronousUpTo, theParams);
+				if (queryCount == null || queryCount > pids.size()) {
+					// No limit, last page or everything was fetched within the limit
+					bundleProvider.setSize(getTotalCount(queryCount, theParams.getOffset(), pids.size()));
+				} else {
+					bundleProvider.setSize(null);
+				}
+			}
+
+			return bundleProvider;
 		});
+	}
+
+	private int getTotalCount(Integer queryCount, Integer offset, int queryResultCount) {
+		if (queryCount != null) {
+			if (offset != null) {
+				return offset + queryResultCount;
+			} else {
+				return queryResultCount;
+			}
+		} else {
+			return queryResultCount;
+		}
+	}
+
+	private Integer getQueryCount(Integer theLoadSynchronousUpTo, SearchParameterMap theParams) {
+		if (theLoadSynchronousUpTo != null) {
+			return theLoadSynchronousUpTo;
+		} else if (theParams.getCount() != null) {
+			return theParams.getCount();
+		} else if (myDaoConfig.getFetchSizeDefaultMaximum() != null) {
+			return myDaoConfig.getFetchSizeDefaultMaximum();
+		}
+		return null;
 	}
 
 	@org.jetbrains.annotations.Nullable
@@ -514,22 +592,6 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			loadSynchronousUpTo = null;
 		}
 		return loadSynchronousUpTo;
-	}
-
-	private void callInterceptorStoragePreAccessResources(IInterceptorBroadcaster theInterceptorBroadcaster, RequestDetails theRequestDetails, ISearchBuilder theSb, List<Long> thePids) {
-		if (thePids.isEmpty() == false) {
-			JpaPreResourceAccessDetails accessDetails = new JpaPreResourceAccessDetails(thePids, () -> theSb);
-			HookParams params = new HookParams()
-				.add(IPreResourceAccessDetails.class, accessDetails)
-				.add(RequestDetails.class, theRequestDetails)
-				.addIfMatchesType(ServletRequestDetails.class, theRequestDetails);
-			JpaInterceptorBroadcaster.doCallHooks(myInterceptorBroadcaster, theRequestDetails, Pointcut.STORAGE_PREACCESS_RESOURCES, params);
-			for (int i = thePids.size() - 1; i >= 0; i--) {
-				if (accessDetails.isDontReturnResourceAtIndex(i)) {
-					thePids.remove(i);
-				}
-			}
-		}
 	}
 
 	@VisibleForTesting
@@ -577,6 +639,27 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 		myInterceptorBroadcaster = theInterceptorBroadcaster;
 	}
 
+	@VisibleForTesting
+	public void setSearchBuilderFactoryForUnitTest(SearchBuilderFactory theSearchBuilderFactory) {
+		mySearchBuilderFactory = theSearchBuilderFactory;
+	}
+
+	@VisibleForTesting
+	public void setPersistedJpaBundleProviderFactoryForUnitTest(PersistedJpaBundleProviderFactory thePersistedJpaBundleProviderFactory) {
+		myPersistedJpaBundleProviderFactory = thePersistedJpaBundleProviderFactory;
+	}
+
+	@VisibleForTesting
+	public void setRequestPartitionHelperService(IRequestPartitionHelperSvc theRequestPartitionHelperService) {
+		myRequestPartitionHelperService = theRequestPartitionHelperService;
+	}
+
+	private boolean isWantCount(SearchParameterMap myParams, boolean wantOnlyCount) {
+		return wantOnlyCount ||
+			SearchTotalModeEnum.ACCURATE.equals(myParams.getSearchTotalMode()) ||
+			(myParams.getSearchTotalMode() == null && SearchTotalModeEnum.ACCURATE.equals(myDaoConfig.getDefaultTotalMode()));
+	}
+
 	/**
 	 * A search task is a Callable task that runs in
 	 * a thread pool to handle an individual search. One instance
@@ -594,25 +677,27 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 		private final SearchParameterMap myParams;
 		private final IDao myCallingDao;
 		private final String myResourceType;
-		private final ArrayList<Long> mySyncedPids = new ArrayList<>();
+		private final ArrayList<ResourcePersistentId> mySyncedPids = new ArrayList<>();
 		private final CountDownLatch myInitialCollectionLatch = new CountDownLatch(1);
 		private final CountDownLatch myCompletionLatch;
-		private final ArrayList<Long> myUnsyncedPids = new ArrayList<>();
+		private final ArrayList<ResourcePersistentId> myUnsyncedPids = new ArrayList<>();
 		private final RequestDetails myRequest;
+		private final RequestPartitionId myRequestPartitionId;
+		private final SearchRuntimeDetails mySearchRuntimeDetails;
+		private final Transaction myParentTransaction;
 		private Search mySearch;
 		private boolean myAbortRequested;
 		private int myCountSavedTotal = 0;
 		private int myCountSavedThisPass = 0;
 		private int myCountBlockedThisPass = 0;
 		private boolean myAdditionalPrefetchThresholdsRemaining;
-		private List<Long> myPreviouslyAddedResourcePids;
+		private List<ResourcePersistentId> myPreviouslyAddedResourcePids;
 		private Integer myMaxResultsToFetch;
-		private SearchRuntimeDetails mySearchRuntimeDetails;
 
 		/**
 		 * Constructor
 		 */
-		protected SearchTask(Search theSearch, IDao theCallingDao, SearchParameterMap theParams, String theResourceType, RequestDetails theRequest) {
+		protected SearchTask(Search theSearch, IDao theCallingDao, SearchParameterMap theParams, String theResourceType, RequestDetails theRequest, RequestPartitionId theRequestPartitionId) {
 			mySearch = theSearch;
 			myCallingDao = theCallingDao;
 			myParams = theParams;
@@ -620,7 +705,9 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			myCompletionLatch = new CountDownLatch(1);
 			mySearchRuntimeDetails = new SearchRuntimeDetails(theRequest, mySearch.getUuid());
 			mySearchRuntimeDetails.setQueryString(theParams.toNormalizedQueryString(theCallingDao.getContext()));
+			myRequestPartitionId = theRequestPartitionId;
 			myRequest = theRequest;
+			myParentTransaction = ElasticApm.currentTransaction();
 		}
 
 		/**
@@ -631,6 +718,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 		Integer awaitInitialSync() {
 			ourLog.trace("Awaiting initial sync");
 			do {
+				ourLog.trace("Search {} aborted: {}", getSearch().getUuid(), !isNotAborted());
 				if (AsyncUtil.awaitLatchAndThrowInternalErrorExceptionOnInterrupt(getInitialCollectionLatch(), 250L, TimeUnit.MILLISECONDS)) {
 					break;
 				}
@@ -648,21 +736,18 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			return myInitialCollectionLatch;
 		}
 
-		void setPreviouslyAddedResourcePids(List<Long> thePreviouslyAddedResourcePids) {
+		void setPreviouslyAddedResourcePids(List<ResourcePersistentId> thePreviouslyAddedResourcePids) {
 			myPreviouslyAddedResourcePids = thePreviouslyAddedResourcePids;
 			myCountSavedTotal = myPreviouslyAddedResourcePids.size();
 		}
 
 		private ISearchBuilder newSearchBuilder() {
 			Class<? extends IBaseResource> resourceTypeClass = myContext.getResourceDefinition(myResourceType).getImplementingClass();
-			ISearchBuilder sb = myCallingDao.newSearchBuilder();
-			sb.setType(resourceTypeClass, myResourceType);
-
-			return sb;
+			return mySearchBuilderFactory.newSearchBuilder(myCallingDao, myResourceType, resourceTypeClass);
 		}
 
 		@Nonnull
-		List<Long> getResourcePids(int theFromIndex, int theToIndex) {
+		List<ResourcePersistentId> getResourcePids(int theFromIndex, int theToIndex) {
 			ourLog.debug("Requesting search PIDs from {}-{}", theFromIndex, theToIndex);
 
 			boolean keepWaiting;
@@ -686,6 +771,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 								break;
 							case FAILED:
 							case FINISHED:
+							case GONE:
 							default:
 								keepWaiting = false;
 								break;
@@ -703,7 +789,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 
 			ourLog.debug("Proceeding, as we have {} results", mySyncedPids.size());
 
-			ArrayList<Long> retVal = new ArrayList<>();
+			ArrayList<ResourcePersistentId> retVal = new ArrayList<>();
 			synchronized (mySyncedPids) {
 				verifySearchHasntFailedOrThrowInternalErrorException(mySearch);
 
@@ -726,7 +812,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 			txTemplate.execute(new TransactionCallbackWithoutResult() {
 				@Override
-				protected void doInTransactionWithoutResult(@NotNull TransactionStatus theArg0) {
+				protected void doInTransactionWithoutResult(@Nonnull @NotNull TransactionStatus theArg0) {
 					doSaveSearch();
 				}
 
@@ -738,12 +824,12 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
 			txTemplate.execute(new TransactionCallbackWithoutResult() {
 				@Override
-				protected void doInTransactionWithoutResult(@NotNull TransactionStatus theArg0) {
+				protected void doInTransactionWithoutResult(@Nonnull @NotNull TransactionStatus theArg0) {
 					if (mySearch.getId() == null) {
 						doSaveSearch();
 					}
 
-					ArrayList<Long> unsyncedPids = myUnsyncedPids;
+					ArrayList<ResourcePersistentId> unsyncedPids = myUnsyncedPids;
 					int countBlocked = 0;
 
 					// Interceptor call: STORAGE_PREACCESS_RESOURCES
@@ -780,13 +866,14 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 
 						if (theResultIter.hasNext() == false) {
 							int skippedCount = theResultIter.getSkippedCount();
+							int nonSkippedCount = theResultIter.getNonSkippedCount();
 							int totalFetched = skippedCount + myCountSavedThisPass + myCountBlockedThisPass;
 							ourLog.trace("MaxToFetch[{}] SkippedCount[{}] CountSavedThisPass[{}] CountSavedThisTotal[{}] AdditionalPrefetchRemaining[{}]", myMaxResultsToFetch, skippedCount, myCountSavedThisPass, myCountSavedTotal, myAdditionalPrefetchThresholdsRemaining);
 
-							if (myMaxResultsToFetch != null && totalFetched < myMaxResultsToFetch) {
+							if (nonSkippedCount == 0 || (myMaxResultsToFetch != null && totalFetched < myMaxResultsToFetch)) {
 								ourLog.trace("Setting search status to FINISHED");
 								mySearch.setStatus(SearchStatusEnum.FINISHED);
-								mySearch.setTotalCount(myCountSavedTotal);
+								mySearch.setTotalCount(myCountSavedTotal - countBlocked);
 							} else if (myAdditionalPrefetchThresholdsRemaining) {
 								ourLog.trace("Setting search status to PASSCMPLET");
 								mySearch.setStatus(SearchStatusEnum.PASSCMPLET);
@@ -794,7 +881,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 							} else {
 								ourLog.trace("Setting search status to FINISHED");
 								mySearch.setStatus(SearchStatusEnum.FINISHED);
-								mySearch.setTotalCount(myCountSavedTotal);
+								mySearch.setTotalCount(myCountSavedTotal - countBlocked);
 							}
 						}
 					}
@@ -846,10 +933,13 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 		@Override
 		public Void call() {
 			StopWatch sw = new StopWatch();
-
+			Span span = myParentTransaction.startSpan("db", "query", "search");
+			span.setName("FHIR Database Search");
 			try {
 				// Create an initial search in the DB and give it an ID
 				saveSearch();
+
+				assert !TransactionSynchronizationManager.isActualTransactionActive();
 
 				TransactionTemplate txTemplate = new TransactionTemplate(myManagedTxManager);
 				txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -860,7 +950,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 
 				txTemplate.execute(new TransactionCallbackWithoutResult() {
 					@Override
-					protected void doInTransactionWithoutResult(TransactionStatus theStatus) {
+					protected void doInTransactionWithoutResult(@Nonnull TransactionStatus theStatus) {
 						doSearch();
 					}
 				});
@@ -902,7 +992,6 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 					ourLog.error("Failed during search loading after {}ms", sw.getMillis(), t);
 				}
 				myUnsyncedPids.clear();
-
 				Throwable rootCause = ExceptionUtils.getRootCause(t);
 				rootCause = defaultIfNull(rootCause, t);
 
@@ -911,6 +1000,10 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 				int failureCode = InternalErrorException.STATUS_CODE;
 				if (t instanceof BaseServerResponseException) {
 					failureCode = ((BaseServerResponseException) t).getStatusCode();
+				}
+
+				if (System.getProperty(UNIT_TEST_CAPTURE_STACK) != null) {
+					failureMessage += "\nStack\n" + ExceptionUtils.getStackTrace(rootCause);
 				}
 
 				mySearch.setFailureMessage(failureMessage);
@@ -925,19 +1018,19 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 				JpaInterceptorBroadcaster.doCallHooks(myInterceptorBroadcaster, myRequest, Pointcut.JPA_PERFTRACE_SEARCH_FAILED, params);
 
 				saveSearch();
-
+				span.captureException(t);
 			} finally {
 
 				myIdToSearchTask.remove(mySearch.getUuid());
 				myInitialCollectionLatch.countDown();
 				markComplete();
+				span.end();
 
 			}
 			return null;
 		}
 
 		private void doSaveSearch() {
-
 			Search newSearch = mySearchCacheSvc.save(mySearch);
 
 			// mySearchDao.save is not supposed to return null, but in unit tests
@@ -960,22 +1053,19 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			 *
 			 * before doing anything else.
 			 */
-			boolean wantOnlyCount = SummaryEnum.COUNT.equals(myParams.getSummaryMode());
-			boolean wantCount =
-				wantOnlyCount ||
-					SearchTotalModeEnum.ACCURATE.equals(myParams.getSearchTotalMode()) ||
-					(myParams.getSearchTotalMode() == null && SearchTotalModeEnum.ACCURATE.equals(myDaoConfig.getDefaultTotalMode()));
+			boolean wantOnlyCount = isWantOnlyCount(myParams);
+			boolean wantCount = isWantCount(myParams, wantOnlyCount);
 			if (wantCount) {
 				ourLog.trace("Performing count");
 				ISearchBuilder sb = newSearchBuilder();
-				Iterator<Long> countIterator = sb.createCountQuery(myParams, mySearch.getUuid(), myRequest);
+				Iterator<Long> countIterator = sb.createCountQuery(myParams, mySearch.getUuid(), myRequest, myRequestPartitionId);
 				Long count = countIterator.next();
 				ourLog.trace("Got count {}", count);
 
 				TransactionTemplate txTemplate = new TransactionTemplate(myManagedTxManager);
 				txTemplate.execute(new TransactionCallbackWithoutResult() {
 					@Override
-					protected void doInTransactionWithoutResult(TransactionStatus theArg0) {
+					protected void doInTransactionWithoutResult(@Nonnull TransactionStatus theArg0) {
 						mySearch.setTotalCount(count.intValue());
 						if (wantOnlyCount) {
 							mySearch.setStatus(SearchStatusEnum.FINISHED);
@@ -1044,7 +1134,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			/*
 			 * Construct the SQL query we'll be sending to the database
 			 */
-			try (IResultIterator resultIterator = sb.createQuery(myParams, mySearchRuntimeDetails, myRequest)) {
+			try (IResultIterator resultIterator = sb.createQuery(myParams, mySearchRuntimeDetails, myRequest, myRequestPartitionId)) {
 				assert (resultIterator != null);
 
 				/*
@@ -1093,11 +1183,10 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 		}
 	}
 
-
 	public class SearchContinuationTask extends SearchTask {
 
-		public SearchContinuationTask(Search theSearch, IDao theCallingDao, SearchParameterMap theParams, String theResourceType, RequestDetails theRequest) {
-			super(theSearch, theCallingDao, theParams, theResourceType, theRequest);
+		public SearchContinuationTask(Search theSearch, IDao theCallingDao, SearchParameterMap theParams, String theResourceType, RequestDetails theRequest, RequestPartitionId theRequestPartitionId) {
+			super(theSearch, theCallingDao, theParams, theResourceType, theRequest, theRequestPartitionId);
 		}
 
 		@Override
@@ -1106,12 +1195,12 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 				TransactionTemplate txTemplate = new TransactionTemplate(myManagedTxManager);
 				txTemplate.afterPropertiesSet();
 				txTemplate.execute(t -> {
-					List<Long> previouslyAddedResourcePids = mySearchResultCacheSvc.fetchAllResultPids(getSearch());
+					List<ResourcePersistentId> previouslyAddedResourcePids = mySearchResultCacheSvc.fetchAllResultPids(getSearch());
 					if (previouslyAddedResourcePids == null) {
 						throw newResourceGoneException(getSearch().getUuid());
 					}
 
-					ourLog.debug("Have {} previously added IDs in search: {}", previouslyAddedResourcePids.size(), getSearch().getUuid());
+					ourLog.trace("Have {} previously added IDs in search: {}", previouslyAddedResourcePids.size(), getSearch().getUuid());
 					setPreviouslyAddedResourcePids(previouslyAddedResourcePids);
 					return null;
 				});
@@ -1132,12 +1221,15 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 
 	}
 
+	private static boolean isWantOnlyCount(SearchParameterMap myParams) {
+		return SummaryEnum.COUNT.equals(myParams.getSummaryMode())
+			| INTEGER_0.equals(myParams.getCount());
+	}
 
-	public static void populateSearchEntity(SearchParameterMap theParams, String theResourceType, String theSearchUuid, String theQueryString, Search theSearch) {
+	public static void populateSearchEntity(SearchParameterMap theParams, String theResourceType, String theSearchUuid, String theQueryString, Search theSearch, RequestPartitionId theRequestPartitionId) {
 		theSearch.setDeleted(false);
 		theSearch.setUuid(theSearchUuid);
 		theSearch.setCreated(new Date());
-		theSearch.setSearchLastReturned(new Date());
 		theSearch.setTotalCount(null);
 		theSearch.setNumFound(0);
 		theSearch.setPreferredPageSize(theParams.getCount());
@@ -1145,9 +1237,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 		theSearch.setLastUpdated(theParams.getLastUpdated());
 		theSearch.setResourceType(theResourceType);
 		theSearch.setStatus(SearchStatusEnum.LOADING);
-
-		theSearch.setSearchQueryString(theQueryString);
-		theSearch.setSearchQueryStringHash(theQueryString.hashCode());
+		theSearch.setSearchQueryString(theQueryString, theRequestPartitionId);
 
 		for (Include next : theParams.getIncludes()) {
 			theSearch.addInclude(new SearchInclude(theSearch, next.getValue(), false, next.isRecurse()));
@@ -1161,8 +1251,8 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 	 * Creates a {@link Pageable} using a start and end index
 	 */
 	@SuppressWarnings("WeakerAccess")
-	public static @Nullable
-	Pageable toPage(final int theFromIndex, int theToIndex) {
+	@Nullable
+	public static Pageable toPage(final int theFromIndex, int theToIndex) {
 		int pageSize = theToIndex - theFromIndex;
 		if (pageSize < 1) {
 			return null;

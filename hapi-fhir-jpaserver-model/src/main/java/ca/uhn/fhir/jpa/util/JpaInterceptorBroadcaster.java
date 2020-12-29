@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.util;
  * #%L
  * HAPI FHIR Model
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,19 +25,22 @@ import ca.uhn.fhir.interceptor.api.IInterceptorBroadcaster;
 import ca.uhn.fhir.interceptor.api.Pointcut;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 
+import javax.annotation.Nullable;
+
 public class JpaInterceptorBroadcaster {
 
 	/**
 	 * Broadcast hooks to both the interceptor service associated with the request, as well
 	 * as the one associated with the JPA module.
 	 */
-	public static boolean doCallHooks(IInterceptorBroadcaster theInterceptorBroadcaster, RequestDetails theRequestDetails, Pointcut thePointcut, HookParams theParams) {
+	public static boolean doCallHooks(IInterceptorBroadcaster theInterceptorBroadcaster, @Nullable RequestDetails theRequestDetails, Pointcut thePointcut, HookParams theParams) {
 		boolean retVal = true;
 		if (theInterceptorBroadcaster != null) {
 			retVal = theInterceptorBroadcaster.callHooks(thePointcut, theParams);
 		}
 		if (theRequestDetails != null && retVal) {
-			theRequestDetails.getInterceptorBroadcaster().callHooks(thePointcut, theParams);
+			IInterceptorBroadcaster interceptorBroadcaster = theRequestDetails.getInterceptorBroadcaster();
+			interceptorBroadcaster.callHooks(thePointcut, theParams);
 		}
 		return retVal;
 	}
@@ -52,7 +55,8 @@ public class JpaInterceptorBroadcaster {
 			retVal = theInterceptorBroadcaster.callHooksAndReturnObject(thePointcut, theParams);
 		}
 		if (theRequestDetails != null && retVal == null) {
-			retVal = theRequestDetails.getInterceptorBroadcaster().callHooksAndReturnObject(thePointcut, theParams);
+			IInterceptorBroadcaster interceptorBroadcaster = theRequestDetails.getInterceptorBroadcaster();
+			retVal = interceptorBroadcaster.callHooksAndReturnObject(thePointcut, theParams);
 		}
 		return retVal;
 	}

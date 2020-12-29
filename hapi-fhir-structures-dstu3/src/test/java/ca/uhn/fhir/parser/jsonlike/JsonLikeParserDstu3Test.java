@@ -1,5 +1,18 @@
 package ca.uhn.fhir.parser.jsonlike;
 
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.parser.IJsonLikeParser;
+import ca.uhn.fhir.parser.json.JsonLikeStructure;
+import ca.uhn.fhir.parser.json.JsonLikeWriter;
+import ca.uhn.fhir.parser.json.jackson.JacksonStructure;
+import ca.uhn.fhir.util.TestUtil;
+import org.apache.commons.io.IOUtils;
+import org.hl7.fhir.dstu3.model.Bundle;
+import org.hl7.fhir.dstu3.model.Patient;
+import org.hl7.fhir.dstu3.model.Reference;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
+
 import java.io.IOException;
 import java.io.StringReader;
 import java.math.BigDecimal;
@@ -10,21 +23,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Stack;
 
-import org.apache.commons.io.IOUtils;
-import org.hl7.fhir.dstu3.model.Bundle;
-import org.hl7.fhir.dstu3.model.Extension;
-import org.hl7.fhir.dstu3.model.Patient;
-import org.hl7.fhir.dstu3.model.Reference;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Test;
-
-import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.parser.IJsonLikeParser;
-import ca.uhn.fhir.parser.json.GsonStructure;
-import ca.uhn.fhir.parser.json.JsonLikeStructure;
-import ca.uhn.fhir.parser.json.JsonLikeWriter;
-import ca.uhn.fhir.util.TestUtil;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class JsonLikeParserDstu3Test {
 	private static FhirContext ourCtx = FhirContext.forDstu3();
@@ -42,7 +43,7 @@ public class JsonLikeParserDstu3Test {
 		String encoded = ourCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(parsed);
 		ourLog.info(encoded);
 		
-		JsonLikeStructure jsonLikeStructure = new GsonStructure();
+		JsonLikeStructure jsonLikeStructure = new JacksonStructure();
 		jsonLikeStructure.load(new StringReader(encoded));
 		
 		IJsonLikeParser jsonLikeparser = (IJsonLikeParser)ourCtx.newJsonParser();
@@ -70,24 +71,24 @@ public class JsonLikeParserDstu3Test {
 		
 		System.out.println("encoded map: " + jsonLikeMap.toString());
 
-		Assert.assertNotNull("Encoded resource missing 'resourceType' element", jsonLikeMap.get("resourceType"));
-		Assert.assertEquals("Expecting 'resourceType'='Patient'; found '"+jsonLikeMap.get("resourceType")+"'", jsonLikeMap.get("resourceType"), "Patient");
+		assertNotNull(jsonLikeMap.get("resourceType"), "Encoded resource missing 'resourceType' element");
+		assertEquals(jsonLikeMap.get("resourceType"), "Patient", "Expecting 'resourceType'='Patient'; found '"+jsonLikeMap.get("resourceType")+"'");
 
-		Assert.assertNotNull("Encoded resource missing 'extension' element", jsonLikeMap.get("extension"));
-		Assert.assertTrue("'extension' element is not a List", (jsonLikeMap.get("extension") instanceof List));
+		assertNotNull(jsonLikeMap.get("extension"), "Encoded resource missing 'extension' element");
+		assertTrue((jsonLikeMap.get("extension") instanceof List), "'extension' element is not a List");
 		
 		List<Object> extensions = (List<Object>)jsonLikeMap.get("extension");
-		Assert.assertEquals("'extnesion' array has more than one entry", 1, extensions.size());
-		Assert.assertTrue("'extension' array entry is not a Map", (extensions.get(0) instanceof Map));
+		assertEquals(1, extensions.size(), "'extnesion' array has more than one entry");
+		assertTrue((extensions.get(0) instanceof Map), "'extension' array entry is not a Map");
 		
 		Map<String, Object> extension = (Map<String,Object>)extensions.get(0);
-		Assert.assertNotNull("'extension' entry missing 'url' member", extension.get("url"));
-		Assert.assertTrue("'extension' entry 'url' member is not a String", (extension.get("url") instanceof String));
-		Assert.assertEquals("Expecting '/extension[]/url' = 'x1'; found '"+extension.get("url")+"'", "x1", (String)extension.get("url"));
+		assertNotNull(extension.get("url"), "'extension' entry missing 'url' member");
+		assertTrue((extension.get("url") instanceof String), "'extension' entry 'url' member is not a String");
+		assertEquals("x1", extension.get("url"), "Expecting '/extension[]/url' = 'x1'; found '"+extension.get("url")+"'");
 	
 	}
 	
-	@AfterClass
+	@AfterAll
 	public static void afterClassClearContext() {
 		TestUtil.clearAllStaticFieldsForUnitTest();
 	}
@@ -132,7 +133,7 @@ public class JsonLikeParserDstu3Test {
 			NONE, OBJECT, ARRAY
 		}
 		private Block currentBlock = new Block(BlockType.NONE);
-		private Stack<Block> blockStack = new Stack<Block>(); 
+		private Stack<Block> blockStack = new Stack<>();
 
 		public JsonLikeMapWriter () {
 			super();
@@ -189,17 +190,6 @@ public class JsonLikeParserDstu3Test {
 			blockStack.push(currentBlock);
 			currentBlock = new Block(BlockType.OBJECT);
 			currentBlock.setObject(newObject);
-			return this;
-		}
-
-		@Override
-		public JsonLikeWriter beginArray() throws IOException {
-			if (currentBlock.getType() == BlockType.NONE) {
-				throw new IOException("JsonLikeStreamWriter.beginArray() called but only beginObject() is allowed here.");
-			}
-			blockStack.push(currentBlock);
-			currentBlock = new Block(BlockType.ARRAY);
-			currentBlock.setArray(new ArrayList<Object>());
 			return this;
 		}
 
@@ -364,15 +354,6 @@ public class JsonLikeParserDstu3Test {
 		}
 
 		@Override
-		public JsonLikeWriter writeNull(String name) throws IOException {
-			if (currentBlock.getType() == BlockType.ARRAY) {
-				throw new IOException("Named JSON elements can only be created in JSON objects");
-			}
-			currentBlock.getObject().put(name, null);
-			return this;
-		}
-
-		@Override
 		public JsonLikeWriter endObject() throws IOException {
 			if (currentBlock.getType() == BlockType.NONE) {
 				ourLog.error("JsonLikeStreamWriter.endObject(); called with no active JSON document");
@@ -399,7 +380,7 @@ public class JsonLikeParserDstu3Test {
 		}
 
 		@Override
-		public JsonLikeWriter endBlock() throws IOException {
+		public JsonLikeWriter endBlock() {
 			if (currentBlock.getType() == BlockType.NONE) {
 				ourLog.error("JsonLikeStreamWriter.endBlock(); called with no active JSON document");
 			} else {

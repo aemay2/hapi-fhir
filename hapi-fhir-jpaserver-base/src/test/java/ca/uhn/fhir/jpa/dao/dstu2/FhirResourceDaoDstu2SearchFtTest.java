@@ -1,7 +1,8 @@
 package ca.uhn.fhir.jpa.dao.dstu2;
 
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
 import java.util.List;
@@ -10,9 +11,8 @@ import javax.servlet.http.HttpServletRequest;
 
 import ca.uhn.fhir.jpa.dao.BaseHapiFhirResourceDao;
 import org.hl7.fhir.instance.model.api.IIdType;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallbackWithoutResult;
 
@@ -23,20 +23,14 @@ import ca.uhn.fhir.model.primitive.Base64BinaryDt;
 import ca.uhn.fhir.model.primitive.StringDt;
 import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.param.*;
-import ca.uhn.fhir.util.TestUtil;
 
 public class FhirResourceDaoDstu2SearchFtTest extends BaseJpaDstu2Test {
 
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(FhirResourceDaoDstu2SearchFtTest.class);
 
-	@Before
+	@BeforeEach
 	public void beforeDisableResultReuse() {
 		myDaoConfig.setReuseCachedSearchResultsForMillis(null);
-	}
-
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
 	}
 
 	@Test
@@ -251,16 +245,16 @@ public class FhirResourceDaoDstu2SearchFtTest extends BaseJpaDstu2Test {
 
 		param = new StringAndListParam();
 		param.addAnd(new StringOrListParam().addOr(new StringParam("obsvalue1")));
-		actual = toUnqualifiedVersionlessIds(myPatientDao.patientInstanceEverything(request, ptId1, null, null, null, param, null, null, mySrd));
+		actual = toUnqualifiedVersionlessIds(myPatientDao.patientInstanceEverything(request, ptId1, null, null, null, null, param, null, null, mySrd));
 		assertThat(actual, containsInAnyOrder(ptId1, obsId1, devId1));
 
 		param = new StringAndListParam();
 		param.addAnd(new StringOrListParam().addOr(new StringParam("obstext1")));
-		actual = toUnqualifiedVersionlessIds(myPatientDao.patientInstanceEverything(request, ptId1, null, null, null, null, param, null, mySrd));
+		actual = toUnqualifiedVersionlessIds(myPatientDao.patientInstanceEverything(request, ptId1, null, null, null, null, null, param, null, mySrd));
 		assertThat(actual, containsInAnyOrder(ptId1, obsId1, devId1));
 
 		request = mock(HttpServletRequest.class);
-		actual = toUnqualifiedVersionlessIds(myPatientDao.patientInstanceEverything(request, ptId1, null, null, null, null, null, null, mySrd));
+		actual = toUnqualifiedVersionlessIds(myPatientDao.patientInstanceEverything(request, ptId1, null, null, null, null, null, null, null, mySrd));
 		assertThat(actual, containsInAnyOrder(ptId1, obsId1, obsId2, devId1));
 
 		/*
@@ -272,11 +266,11 @@ public class FhirResourceDaoDstu2SearchFtTest extends BaseJpaDstu2Test {
 		obs4.getCode().addCoding().setCode("CODE1");
 		obs4.setValue(new StringDt("obsvalue1"));
 		IIdType obsId4 = myObservationDao.create(obs4, mySrd).getId().toUnqualifiedVersionless();
-		assertNotEquals(obsId1.getIdPart(), obsId4.getIdPart(), devId1);
+		assertNotEquals(obsId4.getIdPart(), devId1, obsId1.getIdPart());
 
 		param = new StringAndListParam();
 		param.addAnd(new StringOrListParam().addOr(new StringParam("obsvalue1")));
-		actual = toUnqualifiedVersionlessIds(myPatientDao.patientInstanceEverything(request, ptId1, null, null, null, param, null, null, mySrd));
+		actual = toUnqualifiedVersionlessIds(myPatientDao.patientInstanceEverything(request, ptId1, null, null, null, null, param, null, null, mySrd));
 		assertThat(actual, containsInAnyOrder(ptId1, obsId1, obsId4, devId1));
 
 		/*
@@ -292,7 +286,7 @@ public class FhirResourceDaoDstu2SearchFtTest extends BaseJpaDstu2Test {
 
 		param = new StringAndListParam();
 		param.addAnd(new StringOrListParam().addOr(new StringParam("obsvalue1")));
-		actual = toUnqualifiedVersionlessIds(myPatientDao.patientInstanceEverything(request, ptId1, null, null, null, param, null, null, mySrd));
+		actual = toUnqualifiedVersionlessIds(myPatientDao.patientInstanceEverything(request, ptId1, null, null, null, null, param, null, null, mySrd));
 		assertThat(actual, containsInAnyOrder(ptId1, obsId4));
 
 	}
@@ -343,11 +337,11 @@ public class FhirResourceDaoDstu2SearchFtTest extends BaseJpaDstu2Test {
 
 		param = new StringAndListParam();
 		param.addAnd(new StringOrListParam().addOr(new StringParam("obsvalue1")));
-		actual = toUnqualifiedVersionlessIds(myPatientDao.patientTypeEverything(request, null, null, null, param, null, null, mySrd));
+		actual = toUnqualifiedVersionlessIds(myPatientDao.patientTypeEverything(request, null, null, null, null, param, null, null, mySrd));
 		assertThat(actual, containsInAnyOrder(ptId1, obsId1, devId1));
 
 		request = mock(HttpServletRequest.class);
-		actual = toUnqualifiedVersionlessIds(myPatientDao.patientTypeEverything(request, null, null, null, null, null, null, mySrd));
+		actual = toUnqualifiedVersionlessIds(myPatientDao.patientTypeEverything(request, null, null, null, null, null, null, null, mySrd));
 		assertThat(actual, containsInAnyOrder(ptId1, obsId1, obsId2, devId1, ptId2, obsId3));
 
 		/*
@@ -359,12 +353,12 @@ public class FhirResourceDaoDstu2SearchFtTest extends BaseJpaDstu2Test {
 		obs4.getCode().addCoding().setCode("CODE1");
 		obs4.setValue(new StringDt("obsvalue1"));
 		IIdType obsId4 = myObservationDao.create(obs4, mySrd).getId().toUnqualifiedVersionless();
-		assertNotEquals(obsId1.getIdPart(), obsId4.getIdPart(), devId1);
+		assertNotEquals(obsId4.getIdPart(), devId1, obsId1.getIdPart());
 
 		param = new StringAndListParam();
 		param.addAnd(new StringOrListParam().addOr(new StringParam("obsvalue1")));
-		actual = toUnqualifiedVersionlessIds(myPatientDao.patientTypeEverything(request, null, null, null, param, null, null, mySrd));
-		assertThat(actual, containsInAnyOrder(ptId1, obsId1, obsId4, devId1));
+		actual = toUnqualifiedVersionlessIds(myPatientDao.patientTypeEverything(request, null, null, null, null, param, null, null, mySrd));
+		assertThat(actual, containsInAnyOrder(ptId2, ptId1, obsId1, obsId4, devId1));
 
 		/*
 		 * Make one previous match no longer match
@@ -379,7 +373,7 @@ public class FhirResourceDaoDstu2SearchFtTest extends BaseJpaDstu2Test {
 
 		param = new StringAndListParam();
 		param.addAnd(new StringOrListParam().addOr(new StringParam("obsvalue1")));
-		actual = toUnqualifiedVersionlessIds(myPatientDao.patientTypeEverything(request, null, null, null, param, null, null, mySrd));
+		actual = toUnqualifiedVersionlessIds(myPatientDao.patientTypeEverything(request, null, null, null, null, param, null, null, mySrd));
 		assertThat(actual, containsInAnyOrder(ptId1, obsId4));
 
 	}

@@ -4,7 +4,7 @@ package ca.uhn.fhir.rest.server.interceptor.consent;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -206,6 +206,11 @@ public class ConsentInterceptor {
 			final ConsentOutcome outcome = myConsentService.willSeeResource(theRequestDetails, theResource.getResponseResource(), myContextConsentServices);
 			if (outcome.getResource() != null) {
 				theResource.setResponseResource(outcome.getResource());
+			}
+
+			// Clear the total
+			if (theResource.getResponseResource() instanceof IBaseBundle) {
+				BundleUtil.setTotal(theRequestDetails.getFhirContext(), (IBaseBundle) theResource.getResponseResource(), null);
 			}
 
 			switch (outcome.getStatus()) {

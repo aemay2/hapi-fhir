@@ -1,17 +1,17 @@
 package ca.uhn.fhir.util.bundle;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.util.TestUtil;
 import ca.uhn.fhir.util.BundleUtil;
+import ca.uhn.fhir.util.TestUtil;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Patient;
-import org.junit.AfterClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.function.Consumer;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class BundleUtilTest {
 
@@ -46,6 +46,15 @@ public class BundleUtilTest {
 	}
 
 	@Test
+	public void testSetType() {
+		Bundle b = new Bundle();
+		BundleUtil.setBundleType(ourCtx, b, "transaction");
+		assertEquals(Bundle.BundleType.TRANSACTION, b.getType());
+		assertEquals("transaction", b.getTypeElement().getValueAsString());
+	}
+
+
+	@Test
 	public void toListOfResourcesOfTypeTest() {
 		Bundle bundle = new Bundle();
 		for (int i = 0; i < 5; i++) {
@@ -65,7 +74,7 @@ public class BundleUtilTest {
 		assertEquals("Observation?foo=bar", bundle.getEntryFirstRep().getRequest().getUrl());
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void afterClassClearContext() {
 		TestUtil.clearAllStaticFieldsForUnitTest();
 	}

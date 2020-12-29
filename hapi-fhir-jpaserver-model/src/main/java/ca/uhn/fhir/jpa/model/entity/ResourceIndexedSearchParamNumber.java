@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.model.entity;
  * #%L
  * HAPI FHIR Model
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ package ca.uhn.fhir.jpa.model.entity;
  * #L%
  */
 
+import ca.uhn.fhir.jpa.model.config.PartitionSettings;
 import ca.uhn.fhir.jpa.model.util.BigDecimalNumericFieldBridge;
 import ca.uhn.fhir.model.api.IQueryParameterType;
 import ca.uhn.fhir.rest.param.NumberParam;
@@ -31,7 +32,15 @@ import org.hibernate.search.annotations.Field;
 import org.hibernate.search.annotations.FieldBridge;
 import org.hibernate.search.annotations.NumericField;
 
-import javax.persistence.*;
+import javax.persistence.Column;
+import javax.persistence.Embeddable;
+import javax.persistence.Entity;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+import javax.persistence.Index;
+import javax.persistence.SequenceGenerator;
+import javax.persistence.Table;
 import java.math.BigDecimal;
 import java.util.Objects;
 
@@ -65,24 +74,32 @@ public class ResourceIndexedSearchParamNumber extends BaseResourceIndexedSearchP
 	public ResourceIndexedSearchParamNumber() {
 	}
 
-	public ResourceIndexedSearchParamNumber(String theParamName, BigDecimal theValue) {
+	public ResourceIndexedSearchParamNumber(PartitionSettings thePartitionSettings, String theResourceType, String theParamName, BigDecimal theValue) {
+		setPartitionSettings(thePartitionSettings);
+		setResourceType(theResourceType);
 		setParamName(theParamName);
 		setValue(theValue);
+		calculateHashes();
 	}
 
 	@Override
-	@PrePersist
+	public <T extends BaseResourceIndex> void copyMutableValuesFrom(T theSource) {
+		super.copyMutableValuesFrom(theSource);
+		ResourceIndexedSearchParamNumber source = (ResourceIndexedSearchParamNumber) theSource;
+		myValue = source.myValue;
+		myHashIdentity = source.myHashIdentity;
+	}
+
+
+	@Override
 	public void calculateHashes() {
-		if (myHashIdentity == null) {
-			String resourceType = getResourceType();
-			String paramName = getParamName();
-			setHashIdentity(calculateHashIdentity(resourceType, paramName));
-		}
+		String resourceType = getResourceType();
+		String paramName = getParamName();
+		setHashIdentity(calculateHashIdentity(getPartitionSettings(), getPartitionId(), resourceType, paramName));
 	}
 
-	@Override
-	protected void clearHashes() {
-		myHashIdentity = null;
+	public Long getHashIdentity() {
+		return myHashIdentity;
 	}
 
 	@Override
@@ -98,17 +115,11 @@ public class ResourceIndexedSearchParamNumber extends BaseResourceIndexedSearchP
 		}
 		ResourceIndexedSearchParamNumber obj = (ResourceIndexedSearchParamNumber) theObj;
 		EqualsBuilder b = new EqualsBuilder();
+		b.append(getResourceType(), obj.getResourceType());
 		b.append(getParamName(), obj.getParamName());
-		b.append(getResource(), obj.getResource());
-		b.append(getValue(), obj.getValue());
-		b.append(isMissing(), obj.isMissing());
 		b.append(getHashIdentity(), obj.getHashIdentity());
+		b.append(isMissing(), obj.isMissing());
 		return b.isEquals();
-	}
-
-	public Long getHashIdentity() {
-		calculateHashes();
-		return myHashIdentity;
 	}
 
 	public void setHashIdentity(Long theHashIdentity) {
@@ -122,7 +133,7 @@ public class ResourceIndexedSearchParamNumber extends BaseResourceIndexedSearchP
 
 	@Override
 	public void setId(Long theId) {
-		myId =theId;
+		myId = theId;
 	}
 
 	public BigDecimal getValue() {
@@ -136,8 +147,8 @@ public class ResourceIndexedSearchParamNumber extends BaseResourceIndexedSearchP
 	@Override
 	public int hashCode() {
 		HashCodeBuilder b = new HashCodeBuilder();
+		b.append(getResourceType());
 		b.append(getParamName());
-		b.append(getResource());
 		b.append(getValue());
 		b.append(isMissing());
 		return b.toHashCode();

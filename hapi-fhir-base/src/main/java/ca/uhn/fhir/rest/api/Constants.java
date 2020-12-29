@@ -4,7 +4,7 @@ package ca.uhn.fhir.rest.api;
  * #%L
  * HAPI FHIR - Core Library
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,12 +22,20 @@ package ca.uhn.fhir.rest.api;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+import static org.apache.commons.lang3.StringUtils.defaultIfBlank;
 
 public class Constants {
 
 	public static final String CT_TEXT_CSV = "text/csv";
 	public static final String HEADER_REQUEST_ID = "X-Request-ID";
+	public static final String HEADER_REQUEST_SOURCE = "X-Request-Source";
 	public static final String CACHE_CONTROL_MAX_RESULTS = "max-results";
 	public static final String CACHE_CONTROL_NO_CACHE = "no-cache";
 	public static final String CACHE_CONTROL_NO_STORE = "no-store";
@@ -58,6 +66,7 @@ public class Constants {
 	public static final String CT_HTML = "text/html";
 	public static final String CT_HTML_WITH_UTF8 = "text/html" + CHARSET_UTF8_CTSUFFIX;
 	public static final String CT_JSON = "application/json";
+	public static final String CT_GRAPHQL = "application/graphql";
 	public static final String CT_JSON_PATCH = "application/json-patch+json";
 	public static final String CT_OCTET_STREAM = "application/octet-stream";
 	public static final String CT_TEXT = "text/plain";
@@ -141,8 +150,11 @@ public class Constants {
 	 */
 	public static final String PARAM_BUNDLETYPE = "_bundletype";
 	public static final String PARAM_FILTER = "_filter";
+	public static final String PARAM_CONTAINED = "_contained";
+	public static final String PARAM_CONTAINED_TYPE = "_containedType";
 	public static final String PARAM_CONTENT = "_content";
 	public static final String PARAM_COUNT = "_count";
+	public static final String PARAM_OFFSET = "_offset";
 	public static final String PARAM_DELETE = "_delete";
 	public static final String PARAM_ELEMENTS = "_elements";
 	public static final String PARAM_ELEMENTS_EXCLUDE_MODIFIER = ":exclude";
@@ -242,6 +254,16 @@ public class Constants {
 	 * Operation name for the $lastn operation
 	 */
 	public static final String OPERATION_LASTN = "$lastn";
+	public static final String PARAM_FHIRPATH = "_fhirpath";
+	public static final String PARAM_TYPE = "_type";
+
+	/**
+	 * {@link org.hl7.fhir.instance.model.api.IBaseResource#getUserData(String) User metadata key} used
+	 * to store the partition ID (if any) associated with the given resource. Value for this
+	 * key will be of type {@link ca.uhn.fhir.interceptor.model.RequestPartitionId}.
+	 */
+	public static final String RESOURCE_PARTITION_ID = Constants.class.getName() + "_RESOURCE_PARTITION_ID";
+	public static final String CT_APPLICATION_GZIP = "application/gzip";
 
 	static {
 		CHARSET_UTF8 = StandardCharsets.UTF_8;
@@ -343,4 +365,7 @@ public class Constants {
 		CORS_ALLWED_METHODS = Collections.unmodifiableSet(corsAllowedMethods);
 	}
 
+	public static String codeSystemWithDefaultDescription(String theSystem) {
+		return defaultIfBlank(theSystem, "(none)");
+	}
 }

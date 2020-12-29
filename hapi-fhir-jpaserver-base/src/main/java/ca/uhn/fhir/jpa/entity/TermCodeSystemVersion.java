@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.entity;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,18 +27,34 @@ import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
-import javax.persistence.*;
+import javax.persistence.Column;
+import javax.persistence.Entity;
+import javax.persistence.FetchType;
+import javax.persistence.ForeignKey;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+import javax.persistence.JoinColumn;
+import javax.persistence.ManyToOne;
+import javax.persistence.OneToMany;
+import javax.persistence.OneToOne;
+import javax.persistence.SequenceGenerator;
+import javax.persistence.Table;
+import javax.persistence.UniqueConstraint;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 
 import static org.apache.commons.lang3.StringUtils.length;
 
-@Table(name = "TRM_CODESYSTEM_VER"
+@Table(name = "TRM_CODESYSTEM_VER",
 	// Note, we used to have a constraint named IDX_CSV_RESOURCEPID_AND_VER (don't reuse this)
-)
+	uniqueConstraints = {
+	@UniqueConstraint(name = TermCodeSystemVersion.IDX_CODESYSTEM_AND_VER, columnNames = {"CODESYSTEM_PID", "CS_VERSION_ID"})
+})
 @Entity()
 public class TermCodeSystemVersion implements Serializable {
+	public static final String IDX_CODESYSTEM_AND_VER = "IDX_CODESYSTEM_AND_VER";
 	public static final int MAX_VERSION_LENGTH = 200;
 	private static final long serialVersionUID = 1L;
 	@OneToMany(fetch = FetchType.LAZY, mappedBy = "myCodeSystem")
@@ -50,7 +66,7 @@ public class TermCodeSystemVersion implements Serializable {
 	@Column(name = "PID")
 	private Long myId;
 
-	@OneToOne()
+	@OneToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "RES_ID", referencedColumnName = "RES_ID", nullable = false, updatable = false, foreignKey = @ForeignKey(name = "FK_CODESYSVER_RES_ID"))
 	private ResourceTable myResource;
 
@@ -64,7 +80,7 @@ public class TermCodeSystemVersion implements Serializable {
 	 * This was added in HAPI FHIR 3.3.0 and is nullable just to avoid migration
 	 * issued. It should be made non-nullable at some point.
 	 */
-	@ManyToOne
+	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "CODESYSTEM_PID", referencedColumnName = "PID", nullable = true, foreignKey = @ForeignKey(name = "FK_CODESYSVER_CS_ID"))
 	private TermCodeSystem myCodeSystem;
 
@@ -72,7 +88,7 @@ public class TermCodeSystemVersion implements Serializable {
 	private Long myCodeSystemPid;
 
 	@SuppressWarnings("unused")
-	@OneToOne(mappedBy = "myCurrentVersion", optional = true)
+	@OneToOne(mappedBy = "myCurrentVersion", optional = true, fetch = FetchType.LAZY)
 	private TermCodeSystem myCodeSystemHavingThisVersionAsCurrentVersionIfAny;
 
 	@Column(name = "CS_DISPLAY", nullable = true, updatable = false, length = MAX_VERSION_LENGTH)
@@ -124,6 +140,11 @@ public class TermCodeSystemVersion implements Serializable {
 
 	public TermCodeSystemVersion setResource(ResourceTable theResource) {
 		myResource = theResource;
+		return this;
+	}
+
+	public TermCodeSystemVersion setId(Long theId) {
+		myId = theId;
 		return this;
 	}
 

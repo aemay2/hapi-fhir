@@ -4,7 +4,7 @@ package ca.uhn.fhir.jpa.dao.expunge;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ package ca.uhn.fhir.jpa.dao.expunge;
  * #L%
  */
 
-import ca.uhn.fhir.jpa.dao.DaoConfig;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.util.StopWatch;
 import com.google.common.collect.Lists;
@@ -33,7 +33,15 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 @Service
@@ -48,7 +56,7 @@ public class PartitionRunner {
 		myDaoConfig = theDaoConfig;
 	}
 
-	void runInPartitionedThreads(Slice<Long> theResourceIds, Consumer<List<Long>> partitionConsumer) {
+	public void runInPartitionedThreads(Slice<Long> theResourceIds, Consumer<List<Long>> partitionConsumer) {
 
 		List<Callable<Void>> callableTasks = buildCallableTasks(theResourceIds, partitionConsumer);
 		if (callableTasks.size() == 0) {
@@ -89,17 +97,18 @@ public class PartitionRunner {
 		List<List<Long>> partitions = Lists.partition(theResourceIds.getContent(), myDaoConfig.getExpungeBatchSize());
 
 		for (List<Long> nextPartition : partitions) {
-			Callable<Void> callableTask = () -> {
-				ourLog.info("Expunging any search results pointing to {} resources", nextPartition.size());
-				partitionConsumer.accept(nextPartition);
-				return null;
-			};
-			retval.add(callableTask);
+			if (nextPartition.size() > 0) {
+				Callable<Void> callableTask = () -> {
+					ourLog.info("Expunging any search results pointing to {} resources", nextPartition.size());
+					partitionConsumer.accept(nextPartition);
+					return null;
+				};
+				retval.add(callableTask);
+			}
 		}
 
 		return retval;
 	}
-
 
 	private ExecutorService buildExecutor(int numberOfTasks) {
 		int threadCount = Math.min(numberOfTasks, myDaoConfig.getExpungeThreadCount());

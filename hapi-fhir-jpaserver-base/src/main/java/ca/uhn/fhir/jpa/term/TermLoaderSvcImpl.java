@@ -49,7 +49,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2019 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -103,11 +103,6 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 	@Override
 	public UploadStatistics loadLoinc(List<FileDescriptor> theFiles, RequestDetails theRequestDetails) {
 		try (LoadedFileDescriptors descriptors = new LoadedFileDescriptors(theFiles)) {
-			List<String> loincUploadPropertiesFragment = Collections.singletonList(
-				LOINC_UPLOAD_PROPERTIES_FILE.getCode()
-			);
-			descriptors.verifyMandatoryFilesExist(loincUploadPropertiesFragment);
-
 			Properties uploadProperties = getProperties(descriptors, LOINC_UPLOAD_PROPERTIES_FILE.getCode());
 
 			List<String> mandatoryFilenameFragments = Arrays.asList(
@@ -119,7 +114,6 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 				uploadProperties.getProperty(LOINC_IEEE_MEDICAL_DEVICE_CODE_MAPPING_TABLE_FILE.getCode(), LOINC_IEEE_MEDICAL_DEVICE_CODE_MAPPING_TABLE_FILE_DEFAULT.getCode()),
 				uploadProperties.getProperty(LOINC_IMAGING_DOCUMENT_CODES_FILE.getCode(), LOINC_IMAGING_DOCUMENT_CODES_FILE_DEFAULT.getCode()),
 				uploadProperties.getProperty(LOINC_PART_FILE.getCode(), LOINC_PART_FILE_DEFAULT.getCode()),
-				uploadProperties.getProperty(LOINC_PART_LINK_FILE.getCode(), LOINC_PART_LINK_FILE_DEFAULT.getCode()),
 				uploadProperties.getProperty(LOINC_PART_RELATED_CODE_MAPPING_FILE.getCode(), LOINC_PART_RELATED_CODE_MAPPING_FILE_DEFAULT.getCode()),
 				uploadProperties.getProperty(LOINC_RSNA_PLAYBOOK_FILE.getCode(), LOINC_RSNA_PLAYBOOK_FILE_DEFAULT.getCode()),
 				uploadProperties.getProperty(LOINC_TOP2000_COMMON_LAB_RESULTS_SI_FILE.getCode(), LOINC_TOP2000_COMMON_LAB_RESULTS_SI_FILE_DEFAULT.getCode()),
@@ -127,6 +121,12 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 				uploadProperties.getProperty(LOINC_UNIVERSAL_LAB_ORDER_VALUESET_FILE.getCode(), LOINC_UNIVERSAL_LAB_ORDER_VALUESET_FILE_DEFAULT.getCode())
 			);
 			descriptors.verifyMandatoryFilesExist(mandatoryFilenameFragments);
+
+			List<String> splitPartLinkFilenameFragments = Arrays.asList(
+				uploadProperties.getProperty(LOINC_PART_LINK_FILE_PRIMARY.getCode(), LOINC_PART_LINK_FILE_PRIMARY_DEFAULT.getCode()),
+				uploadProperties.getProperty(LOINC_PART_LINK_FILE_SUPPLEMENTARY.getCode(), LOINC_PART_LINK_FILE_SUPPLEMENTARY_DEFAULT.getCode())
+			);
+			descriptors.verifyPartLinkFilesExist(splitPartLinkFilenameFragments, uploadProperties.getProperty(LOINC_PART_LINK_FILE.getCode(), LOINC_PART_LINK_FILE_DEFAULT.getCode()));
 
 			List<String> optionalFilenameFragments = Arrays.asList(
 				uploadProperties.getProperty(LOINC_GROUP_FILE.getCode(), LOINC_GROUP_FILE_DEFAULT.getCode()),
@@ -137,7 +137,15 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 
 			ourLog.info("Beginning LOINC processing");
 
-			return processLoincFiles(descriptors, theRequestDetails, uploadProperties);
+
+			String codeSystemVersionId = uploadProperties.getProperty(LOINC_CODESYSTEM_VERSION.getCode());
+			if (codeSystemVersionId != null ) {
+				// Load the code system with version and then remove the version property.
+				processLoincFiles(descriptors, theRequestDetails, uploadProperties, false);
+				uploadProperties.remove(LOINC_CODESYSTEM_VERSION.getCode());
+			}
+			// Load the same code system with null version. This will become the default version.
+			return processLoincFiles(descriptors, theRequestDetails, uploadProperties, true);
 		}
 	}
 
@@ -238,6 +246,13 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 	@NotNull
 	private Properties getProperties(LoadedFileDescriptors theDescriptors, String thePropertiesFile) {
 		Properties retVal = new Properties();
+
+		try (InputStream propertyStream = TermLoaderSvcImpl.class.getResourceAsStream("/ca/uhn/fhir/jpa/term/loinc/loincupload.properties")) {
+			retVal.load(propertyStream);
+		} catch (IOException e) {
+			throw new InternalErrorException("Failed to process loinc.properties", e);
+		}
+
 		for (FileDescriptor next : theDescriptors.getUncompressedFileDescriptors()) {
 			if (next.getFilename().endsWith(thePropertiesFile)) {
 				try {
@@ -279,15 +294,6 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 			imgthlaCs = FhirContext.forR4().newXmlParser().parseResource(CodeSystem.class, imgthlaCsString);
 		} catch (IOException e) {
 			throw new InternalErrorException("Failed to load imgthla.xml", e);
-		}
-
-		Map<String, CodeSystem.PropertyType> propertyNamesToTypes = new HashMap<>();
-		for (CodeSystem.PropertyComponent nextProperty : imgthlaCs.getProperty()) {
-			String nextPropertyCode = nextProperty.getCode();
-			CodeSystem.PropertyType nextPropertyType = nextProperty.getType();
-			if (isNotBlank(nextPropertyCode)) {
-				propertyNamesToTypes.put(nextPropertyCode, nextPropertyType);
-			}
 		}
 
 		boolean foundHlaNom = false;
@@ -374,7 +380,7 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 //		return new UploadStatistics(conceptCount, target);
 	}
 
-	UploadStatistics processLoincFiles(LoadedFileDescriptors theDescriptors, RequestDetails theRequestDetails, Properties theUploadProperties) {
+	UploadStatistics processLoincFiles(LoadedFileDescriptors theDescriptors, RequestDetails theRequestDetails, Properties theUploadProperties, Boolean theCloseFiles) {
 		final TermCodeSystemVersion codeSystemVersion = new TermCodeSystemVersion();
 		final Map<String, TermConcept> code2concept = new HashMap<>();
 		final List<ValueSet> valueSets = new ArrayList<>();
@@ -384,6 +390,11 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 		try {
 			String loincCsString = IOUtils.toString(BaseTermReadSvcImpl.class.getResourceAsStream("/ca/uhn/fhir/jpa/term/loinc/loinc.xml"), Charsets.UTF_8);
 			loincCs = FhirContext.forR4().newXmlParser().parseResource(CodeSystem.class, loincCsString);
+			String  codeSystemVersionId = theUploadProperties.getProperty(LOINC_CODESYSTEM_VERSION.getCode());
+			if (codeSystemVersionId != null) {
+				loincCs.setVersion(codeSystemVersionId);
+				loincCs.setId(loincCs.getId() + "-" + codeSystemVersionId);
+			}
 		} catch (IOException e) {
 			throw new InternalErrorException("Failed to load loinc.xml", e);
 		}
@@ -397,7 +408,7 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 			}
 		}
 
-		// FIXME: DM 2019-09-13 - Manually add EXTERNAL_COPYRIGHT_NOTICE property until Regenstrief adds this to loinc.xml
+		// TODO: DM 2019-09-13 - Manually add EXTERNAL_COPYRIGHT_NOTICE property until Regenstrief adds this to loinc.xml
 		if (!propertyNamesToTypes.containsKey("EXTERNAL_COPYRIGHT_NOTICE")) {
 			String externalCopyRightNoticeCode = "EXTERNAL_COPYRIGHT_NOTICE";
 			CodeSystem.PropertyType externalCopyRightNoticeType = CodeSystem.PropertyType.STRING;
@@ -424,7 +435,7 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 		iterateOverZipFile(theDescriptors, theUploadProperties.getProperty(LOINC_ANSWERLIST_FILE.getCode(), LOINC_ANSWERLIST_FILE_DEFAULT.getCode()), handler, ',', QuoteMode.NON_NUMERIC, false);
 
 		// Answer list links (connects LOINC observation codes to answer list codes)
-		handler = new LoincAnswerListLinkHandler(code2concept, valueSets);
+		handler = new LoincAnswerListLinkHandler(code2concept);
 		iterateOverZipFile(theDescriptors, theUploadProperties.getProperty(LOINC_ANSWERLIST_LINK_FILE.getCode(), LOINC_ANSWERLIST_LINK_FILE_DEFAULT.getCode()), handler, ',', QuoteMode.NON_NUMERIC, false);
 
 		// RSNA playbook
@@ -433,10 +444,6 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 		// two files, and the RSNA Playbook file has more metadata
 		handler = new LoincRsnaPlaybookHandler(code2concept, valueSets, conceptMaps, theUploadProperties);
 		iterateOverZipFile(theDescriptors, theUploadProperties.getProperty(LOINC_RSNA_PLAYBOOK_FILE.getCode(), LOINC_RSNA_PLAYBOOK_FILE_DEFAULT.getCode()), handler, ',', QuoteMode.NON_NUMERIC, false);
-
-		// Part link
-		handler = new LoincPartLinkHandler(codeSystemVersion, code2concept);
-		iterateOverZipFile(theDescriptors, theUploadProperties.getProperty(LOINC_PART_LINK_FILE.getCode(), LOINC_PART_LINK_FILE_DEFAULT.getCode()), handler, ',', QuoteMode.NON_NUMERIC, false);
 
 		// Part related code mapping
 		handler = new LoincPartRelatedCodeMappingHandler(code2concept, valueSets, conceptMaps, theUploadProperties);
@@ -478,9 +485,17 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 		handler = new LoincParentGroupFileHandler(code2concept, valueSets, conceptMaps, theUploadProperties);
 		iterateOverZipFile(theDescriptors, theUploadProperties.getProperty(LOINC_PARENT_GROUP_FILE.getCode(), LOINC_PARENT_GROUP_FILE_DEFAULT.getCode()), handler, ',', QuoteMode.NON_NUMERIC, false);
 
-		IOUtils.closeQuietly(theDescriptors);
+		// Part link
+		handler = new LoincPartLinkHandler(codeSystemVersion, code2concept, propertyNamesToTypes);
+		iterateOverZipFileOptional(theDescriptors, theUploadProperties.getProperty(LOINC_PART_LINK_FILE.getCode(), LOINC_PART_LINK_FILE_DEFAULT.getCode()), handler, ',', QuoteMode.NON_NUMERIC, false);
+		iterateOverZipFileOptional(theDescriptors, theUploadProperties.getProperty(LOINC_PART_LINK_FILE_PRIMARY.getCode(), LOINC_PART_LINK_FILE_PRIMARY_DEFAULT.getCode()), handler, ',', QuoteMode.NON_NUMERIC, false);
+		iterateOverZipFileOptional(theDescriptors, theUploadProperties.getProperty(LOINC_PART_LINK_FILE_SUPPLEMENTARY.getCode(), LOINC_PART_LINK_FILE_SUPPLEMENTARY_DEFAULT.getCode()), handler, ',', QuoteMode.NON_NUMERIC, false);
 
-		valueSets.add(getValueSetLoincAll());
+		if (theCloseFiles) {
+			IOUtils.closeQuietly(theDescriptors);
+		}
+
+		valueSets.add(getValueSetLoincAll(theUploadProperties));
 
 		for (Entry<String, TermConcept> next : code2concept.entrySet()) {
 			TermConcept nextConcept = next.getValue();
@@ -499,12 +514,20 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 		return new UploadStatistics(conceptCount, target);
 	}
 
-	private ValueSet getValueSetLoincAll() {
+	private ValueSet getValueSetLoincAll(Properties theUploadProperties) {
 		ValueSet retVal = new ValueSet();
 
-		retVal.setId("loinc-all");
+		String codeSystemVersionId = theUploadProperties.getProperty(LOINC_CODESYSTEM_VERSION.getCode());
+		String valueSetId;
+		if (codeSystemVersionId != null) {
+			valueSetId = "loinc-all" + "-" + codeSystemVersionId;
+		} else {
+			valueSetId = "loinc-all";
+			codeSystemVersionId = "1.0.0";
+		}
+		retVal.setId(valueSetId);
 		retVal.setUrl("http://loinc.org/vs");
-		retVal.setVersion("1.0.0");
+		retVal.setVersion(codeSystemVersionId);
 		retVal.setName("All LOINC codes");
 		retVal.setStatus(Enumerations.PublicationStatus.ACTIVE);
 		retVal.setDate(new Date());
@@ -559,6 +582,7 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 		cs.setUrl(SCT_URI);
 		cs.setName("SNOMED CT");
 		cs.setContent(CodeSystem.CodeSystemContentMode.NOTPRESENT);
+		cs.setStatus(Enumerations.PublicationStatus.ACTIVE);
 		IIdType target = storeCodeSystem(theRequestDetails, codeSystemVersion, cs, null, null);
 
 		return new UploadStatistics(code2concept.size(), target);
@@ -589,6 +613,14 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 	}
 
 	public static void iterateOverZipFile(LoadedFileDescriptors theDescriptors, String theFileNamePart, IRecordHandler theHandler, char theDelimiter, QuoteMode theQuoteMode, boolean theIsPartialFilename) {
+		iterateOverZipFile(theDescriptors, theFileNamePart, theHandler, theDelimiter, theQuoteMode, theIsPartialFilename, true);
+	}
+
+	public static void iterateOverZipFileOptional(LoadedFileDescriptors theDescriptors, String theFileNamePart, IRecordHandler theHandler, char theDelimiter, QuoteMode theQuoteMode, boolean theIsPartialFilename) {
+		iterateOverZipFile(theDescriptors, theFileNamePart, theHandler, theDelimiter, theQuoteMode, theIsPartialFilename, false);
+	}
+
+	private static void iterateOverZipFile(LoadedFileDescriptors theDescriptors, String theFileNamePart, IRecordHandler theHandler, char theDelimiter, QuoteMode theQuoteMode, boolean theIsPartialFilename, boolean theRequireMatch) {
 
 		boolean foundMatch = false;
 		for (FileDescriptor nextZipBytes : theDescriptors.getUncompressedFileDescriptors()) {
@@ -635,7 +667,7 @@ public class TermLoaderSvcImpl implements ITermLoaderSvc {
 
 		}
 
-		if (!foundMatch) {
+		if (!foundMatch && theRequireMatch) {
 			throw new InvalidRequestException("Did not find file matching " + theFileNamePart);
 		}
 
